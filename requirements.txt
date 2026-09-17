@@ -3,3 +3,5 @@ requests>=2.28
 DrissionPage>=4.1     # 接管真实 Chrome 过 Turnstile（proxyscrape_register.py）
 PyJWT>=2.8            # 解析 access_token（proxyscrape_auth.py）
 curl_cffi>=0.6        # 带浏览器指纹的请求（filter_xai_proxies.py）
+Flask>=3.1,<4         # Web 控制台 API 与页面
+gunicorn>=23,<24      # Web 控制台生产服务器

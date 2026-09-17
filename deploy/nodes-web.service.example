@@ -1,0 +1,25 @@
+[Unit]
+Description=Nodes registration dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nodes/current
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+Environment=PYTHONIOENCODING=utf-8
+Environment=NODES_ACCOUNT_DIR=/opt/nodes/data/account
+Environment=NODES_NODE_DIR=/opt/nodes/data/node
+Environment=NODES_WEB_DATA_DIR=/opt/nodes/data/web
+Environment=NODES_CONFIG_FILE=/opt/nodes/config.local.json
+ExecStart=/opt/nodes/.venv/bin/gunicorn --bind 127.0.0.1:8891 --workers 1 --threads 8 --timeout 900 --access-logfile - wsgi:application
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=20
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

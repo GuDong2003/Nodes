@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Nodes Ops 登录</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-brand">
+      <div class="brand-mark large">N</div>
+      <h1>Nodes Ops</h1>
+      <p>注册任务运营控制台</p>
+      <div class="login-status"><span></span>Turnstile · Mail · Premium DC</div>
+    </section>
+    <section class="login-form-panel">
+      <form method="post" class="login-form">
+        <div><span class="eyebrow">安全访问</span><h2>登录控制台</h2></div>
+        {% if error %}<p class="login-error">{{ error }}</p>{% endif %}
+        <label><span>用户名</span><input name="username" value="{{ username }}" autocomplete="username" required autofocus></label>
+        <label><span>密码</span><input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary-button" type="submit">登录</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

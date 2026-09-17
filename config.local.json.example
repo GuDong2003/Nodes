@@ -1,5 +1,19 @@
 {
+  "mail_provider": "yunxin",
+  "mail_api_base": "https://mail.example.com",
+  "mail_api_key": "",
+  "mail_type": "mail",
+  "mail_suffix": "mail.com",
+  "mail_domain": "",
   "yyds_api_key": "在此填入你的 YYDS Mail API Key",
   "yyds_domain": "",
-  "turnstile_extension_path": ""
+  "captcha_provider": "2captcha",
+  "captcha_api_key": "",
+  "captcha_api_base": "https://api.2captcha.com",
+  "captcha_timeout": 180,
+  "captcha_poll_interval": 5,
+  "turnstile_extension_path": "",
+  "web_username": "admin",
+  "web_password_hash": "使用 werkzeug.security.generate_password_hash 生成",
+  "web_session_secret": "至少 32 字节的随机字符串"
 }

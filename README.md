@@ -1,6 +1,9 @@
 # Nodes
 
-ProxyScrape 注册与代理导出工具。浏览器仅用于获取 Turnstile token，邮箱创建、注册、收信、验证与代理列表获取均通过 HTTP 完成。
+ProxyScrape 注册与代理导出工具。Turnstile token 可通过 2Captcha API 或本地浏览器获取，邮箱创建、注册、收信、验证、免费 Premium DC trial 领取与代理列表获取均通过 HTTP 完成。
+
+项目同时提供受登录保护的 Web 控制台，可在浏览器中启动单个/批量任务、
+查看实时进度、账号状态、任务日志并下载账号或代理文件。
 可与这个项目做代理池 导入使用
 https://github.com/Resinat/Resin
 
@@ -21,6 +24,8 @@ https://github.com/Resinat/Resin
 | 文件 | 说明 |
 |------|------|
 | `proxyscrape_register.py` | 交互式注册、邮箱验证与代理导出入口 |
+| `web_app.py` | 经过登录、CSRF 和限速保护的 Web API |
+| `templates/`, `static/` | 响应式仪表盘前端 |
 | `proxyscrape_auth.py` | ProxyScrape 登录、注册与 Token 管理封装 |
 | `启动注册.bat` | Windows 启动脚本 |
 | `account/` | 本地账号与 Token 输出，不进入 Git |
@@ -40,7 +45,7 @@ python -m pip install -r requirements.txt
 
 ## 本地隐私配置
 
-项目不会在源码中保存 YYDS Key、自有域名或本机绝对路径。有两种配置方式，二选一：
+项目不会在源码中保存邮箱 API Key、自有域名或本机绝对路径。支持自建云芯邮箱 API 和原有 YYDS Mail。
 
 **方式一：配置文件（推荐，最省事）**
 
@@ -50,12 +55,42 @@ python -m pip install -r requirements.txt
 cp config.local.json.example config.local.json
 ```
 
-然后编辑 `config.local.json`：
+然后编辑 `config.local.json`。自建云芯邮箱示例：
+
+```json
+{
+  "mail_provider": "yunxin",
+  "mail_api_base": "https://mail.152-53-166-184.sslip.io",
+  "mail_api_key": "qm_你的密钥",
+  "mail_type": "mail",
+  "mail_suffix": "mail.com",
+  "mail_domain": "",
+  "captcha_provider": "2captcha",
+  "captcha_api_key": "你的 2Captcha API Key",
+  "captcha_api_base": "https://api.2captcha.com",
+  "captcha_timeout": 180,
+  "captcha_poll_interval": 5,
+  "turnstile_extension_path": ""
+}
+```
+
+配置字段：
 
 | 字段 | 必需 | 说明 |
 |------|------|------|
-| `yyds_api_key` | 是 | YYDS Mail API Key |
-| `yyds_domain` | 否 | 已在 YYDS 验证的自有域名；留空则由 YYDS 选择域名 |
+| `mail_provider` | 是 | `yunxin` 使用自建 HTTPS API；`yyds` 使用原接口 |
+| `mail_api_base` | yunxin 必需 | 云芯邮箱服务地址 |
+| `mail_api_key` | yunxin 必需 | `qm_` 开头的 API 密钥 |
+| `mail_type` | 否 | `mail`、`cf` 或 `auto`；默认 `mail` |
+| `mail_suffix` | 否 | `mail` 类型的后缀，例如 `mail.com` |
+| `mail_domain` | 否 | 仅用于 `cf` 自有域名，不要填写 mail.com 后缀 |
+| `yyds_api_key` | yyds 必需 | YYDS Mail API Key |
+| `yyds_domain` | 否 | 已在 YYDS 验证的自有域名 |
+| `captcha_provider` | 否 | `2captcha` 使用远程打码；`browser` 保留原浏览器扩展方案 |
+| `captcha_api_key` | 2captcha 必需 | 2Captcha API Key，只保存在本地配置中 |
+| `captcha_api_base` | 否 | 默认 `https://api.2captcha.com` |
+| `captcha_timeout` | 否 | 单个 Turnstile 任务超时秒数，默认 180 |
+| `captcha_poll_interval` | 否 | 查询结果间隔秒数，最小 5 秒 |
 | `turnstile_extension_path` | 否 | 留空即用仓库自带的 `turnstilePatch/`；仅当想换成本机其它目录时才填 |
 
 `config.local.json` 已被 `.gitignore` 排除，不会进入仓库。
@@ -64,46 +99,68 @@ cp config.local.json.example config.local.json
 
 | 环境变量 | 必需 | 说明 |
 |----------|------|------|
+| `MAIL_PROVIDER` | 否 | `yunxin` 或 `yyds` |
+| `MAIL_API_BASE` | yunxin 必需 | 云芯邮箱服务地址 |
+| `MAIL_API_KEY` | yunxin 必需 | `qm_` 开头的 API 密钥 |
+| `MAIL_TYPE` | 否 | `mail`、`cf` 或 `auto` |
+| `MAIL_SUFFIX` | 否 | mail.com 母号别名后缀 |
+| `MAIL_DOMAIN` | 否 | CF 自有域名 |
 | `YYDS_API_KEY` | 是 | YYDS Mail API Key |
 | `YYDS_DOMAIN` | 否 | 已验证的自有域名；留空则由 YYDS 选择 |
+| `CAPTCHA_PROVIDER` | 否 | `2captcha` 或 `browser` |
+| `CAPTCHA_API_KEY` | 2captcha 必需 | 2Captcha API Key |
+| `CAPTCHA_API_BASE` | 否 | 2Captcha API 根地址 |
+| `CAPTCHA_TIMEOUT` | 否 | 单任务超时秒数 |
+| `CAPTCHA_POLL_INTERVAL` | 否 | 查询结果间隔秒数，最小 5 秒 |
 | `TURNSTILE_EXTENSION_PATH` | 否 | 留空即用仓库自带扩展；仅覆盖为本机其它目录时才填 |
 | `PYTHON_EXE` | 否 | `启动注册.bat` 使用的 Python；默认使用 PATH 中的 `python` |
 
 PowerShell 当前窗口配置示例：
 
 ```powershell
-$env:YYDS_API_KEY = "YOUR_YYDS_API_KEY"
-$env:YYDS_DOMAIN = ""
+$env:MAIL_PROVIDER = "yunxin"
+$env:MAIL_API_BASE = "https://mail.152-53-166-184.sslip.io"
+$env:MAIL_API_KEY = "qm_YOUR_API_KEY"
+$env:MAIL_TYPE = "mail"
+$env:MAIL_SUFFIX = "mail.com"
 python .\proxyscrape_register.py
 ```
 
 这些值只存在于当前 PowerShell 进程，不会写入仓库。
 
-## 切换 YYDS 域名
+## 切换邮箱服务
 
-### 使用 YYDS 自动选择的域名
+使用原有 YYDS 时设置：
 
-只设置 API Key，将 `YYDS_DOMAIN` 留空：
-
-```powershell
-$env:YYDS_API_KEY = "YOUR_YYDS_API_KEY"
-Remove-Item Env:YYDS_DOMAIN -ErrorAction SilentlyContinue
+```json
+{
+  "mail_provider": "yyds",
+  "yyds_api_key": "你的 YYDS API Key",
+  "yyds_domain": ""
+}
 ```
 
-创建邮箱时，域名由 YYDS 服务选择。
+### 云芯 mail.com 后缀
 
-### 使用自己的域名
-
-先在 YYDS 中添加并验证自有域名，然后仅在本地设置：
+使用 `/api/v1/suffixes` 返回的后缀：
 
 ```powershell
-$env:YYDS_API_KEY = "YOUR_YYDS_API_KEY"
-$env:YYDS_DOMAIN = "mail.example.com"
+$env:MAIL_TYPE = "mail"
+$env:MAIL_SUFFIX = "mail.com"
+Remove-Item Env:MAIL_DOMAIN -ErrorAction SilentlyContinue
 ```
 
-`mail.example.com` 是公开占位符，请替换为已经验证的真实域名。真实域名不得写入源码、README 或提交记录。
+### 云芯 CF 自有域名
 
-两种模式仍使用同一套 YYDS API；切换后重新启动程序即可生效。
+`mail_domain` 只用于 `/api/config` 返回的 CF 域名：
+
+```powershell
+$env:MAIL_TYPE = "cf"
+$env:MAIL_SUFFIX = ""
+$env:MAIL_DOMAIN = "mail.example.com"
+```
+
+`mail.example.com` 是占位符，需替换为云芯 `/api/config` 中实际启用的域名。切换配置后重新启动程序。
 
 ## 运行
 
@@ -136,4 +193,4 @@ git status --ignored
 git grep -n -I -E "API_KEY|access_token|refresh_token|proxy_password"
 ```
 
-公开的 ProxyScrape Turnstile sitekey 和 Google OAuth Client ID 来自网页前端，不是账户私钥；YYDS API Key、登录 Token、邮箱账户和代理凭据必须始终保留在本地。
+公开的 ProxyScrape Turnstile sitekey 和 Google OAuth Client ID 来自网页前端，不是账户私钥；邮箱 API Key、登录 Token、邮箱账户和代理凭据必须始终保留在本地。
