@@ -53,7 +53,7 @@ def _setting(config_name, env_name, default=""):
 # 邮箱服务：默认兼容原有 YYDS，也支持自建云芯邮箱 API。
 MAIL_PROVIDER = str(_setting("mail_provider", "MAIL_PROVIDER")).strip().lower()
 MAIL_API_BASE = str(_setting(
-    "mail_api_base", "MAIL_API_BASE", "https://mail.152-53-166-184.sslip.io"
+    "mail_api_base", "MAIL_API_BASE", "https://mail.example.com"
 )).strip().rstrip("/")
 MAIL_API_KEY = str(_setting("mail_api_key", "MAIL_API_KEY")).strip()
 MAIL_TYPE = str(_setting("mail_type", "MAIL_TYPE", "mail")).strip().lower()
@@ -201,7 +201,7 @@ def reload_settings():
     _LOCAL_CONFIG = _load_local_config()
     MAIL_PROVIDER = str(_setting("mail_provider", "MAIL_PROVIDER")).strip().lower()
     MAIL_API_BASE = str(_setting(
-        "mail_api_base", "MAIL_API_BASE", "https://mail.152-53-166-184.sslip.io"
+        "mail_api_base", "MAIL_API_BASE", "https://mail.example.com"
     )).strip().rstrip("/")
     MAIL_API_KEY = str(_setting("mail_api_key", "MAIL_API_KEY")).strip()
     MAIL_TYPE = str(_setting("mail_type", "MAIL_TYPE", "mail")).strip().lower()

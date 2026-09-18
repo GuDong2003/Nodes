@@ -2,10 +2,12 @@
 """Live proxy pool: 8 slots per healthy ProxyScrape account."""
 
 import hashlib
+import json
 import os
 import re
 from pathlib import Path
-from urllib.parse import quote
+import base64
+from urllib.parse import quote, quote_plus
 
 
 DEFAULT_TARGET_SLOTS = 80
@@ -15,7 +17,7 @@ DEFAULT_MAX_REGISTER = 5
 DEFAULT_LOOP_SECONDS = 120
 DEFAULT_GATEWAY_HOST = "127.0.0.1"
 DEFAULT_GATEWAY_PORT = 8970
-DEFAULT_PLATFORM = "Default"
+DEFAULT_PLATFORM = "Nodes"
 
 _PROXY_LINE = re.compile(
     r"^(?:https?://)?([^:@/]+):([^@/]+)@(\[[^\]]+\]:\d+|[^/\s]+)",
@@ -170,6 +172,7 @@ def capacity(entries, settings):
     return {
         "live_accounts": len(entries),
         "live_slots": live_slots,
+        "concurrent_slots": live_slots,
         "target_slots": target,
         "slots_per_account": per_account,
         "shortage_slots": shortage,
@@ -205,6 +208,88 @@ def gpt_gateway_lines(count, token, host, port, auth_version, platform):
             f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{int(port)}"
         )
     return lines
+
+
+def _yaml_quote(value):
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def clash_yaml(count, token, host, port, auth_version, platform):
+    total = max(0, int(count))
+    names = []
+    proxy_blocks = []
+    for index in range(1, total + 1):
+        user, password = gateway_identity(index, auth_version, platform, token)
+        name = f"{platform}-{index:02d}"
+        names.append(name)
+        proxy_blocks.extend([
+            f"  - name: {_yaml_quote(name)}",
+            "    type: http",
+            f"    server: {_yaml_quote(host)}",
+            f"    port: {int(port)}",
+            f"    username: {_yaml_quote(user)}",
+            f"    password: {_yaml_quote(password)}",
+        ])
+    lines = [
+        "mixed-port: 7890",
+        "allow-lan: false",
+        "mode: rule",
+        "log-level: warning",
+        "proxies:",
+    ]
+    if proxy_blocks:
+        lines.extend(proxy_blocks)
+    else:
+        lines.append("  []")
+    lines.append("proxy-groups:")
+    if names:
+        lines.extend([
+            f"  - name: {_yaml_quote('AUTO')}",
+            "    type: url-test",
+            "    url: http://www.gstatic.com/generate_204",
+            "    interval: 300",
+            "    proxies:",
+        ])
+        lines.extend(f"      - {_yaml_quote(name)}" for name in names)
+        lines.extend([
+            f"  - name: {_yaml_quote('PROXY')}",
+            "    type: select",
+            "    proxies:",
+            f"      - {_yaml_quote('AUTO')}",
+        ])
+        lines.extend(f"      - {_yaml_quote(name)}" for name in names)
+    else:
+        lines.extend([
+            f"  - name: {_yaml_quote('PROXY')}",
+            "    type: select",
+            "    proxies:",
+            f"      - {_yaml_quote('DIRECT')}",
+        ])
+    lines.extend([
+        "rules:",
+        "  - MATCH,PROXY",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def ladder_uri_lines(count, token, host, port, auth_version, platform):
+    lines = []
+    total = max(0, int(count))
+    for index in range(1, total + 1):
+        user, password = gateway_identity(index, auth_version, platform, token)
+        tag = quote_plus(f"{platform}-{index:02d}")
+        lines.append(
+            f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{int(port)}#{tag}"
+        )
+    return lines
+
+
+def ladder_base64(count, token, host, port, auth_version, platform):
+    body = "\n".join(ladder_uri_lines(count, token, host, port, auth_version, platform))
+    if body:
+        body += "\n"
+    return base64.b64encode(body.encode("utf-8")).decode("ascii")
 
 
 def env_file_map(path):

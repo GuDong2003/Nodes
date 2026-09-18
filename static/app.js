@@ -52,13 +52,17 @@ function statusChip(status) {
 
 function renderPool(pool) {
   if (!pool) return;
-  const slots = `${pool.live_slots || 0}/${pool.target_slots || 80}`;
-  document.getElementById('poolAccounts').textContent = pool.live_accounts ?? '—';
+  const live = pool.live_slots || 0;
+  const accounts = pool.live_accounts || 0;
+  const slots = `${live} 可连（${accounts}×8）`;
+  document.getElementById('poolAccounts').textContent = accounts || '—';
   document.getElementById('poolSlots').textContent = slots;
   document.getElementById('poolNeeded').textContent = pool.needed_accounts ?? 0;
   document.getElementById('poolAuto').textContent = pool.auto_register ? '开' : '关';
   document.getElementById('poolResinUrl').value = pool.subscription_url || '';
   document.getElementById('poolGptUrl').value = pool.gpt_subscription_url || '';
+  document.getElementById('poolClashUrl').value = pool.clash_subscription_url || '';
+  document.getElementById('poolLadderUrl').value = pool.ladder_subscription_url || '';
   document.getElementById('poolGptSample').value = pool.gpt_gateway_sample || '';
   document.getElementById('metricProxiesNote').textContent = `Resin 槽 ${slots}`;
 }
@@ -616,6 +620,9 @@ document.getElementById('ensureCapacityButton').addEventListener('click', async 
 });
 document.querySelectorAll('[data-copy]').forEach(button => {
   button.addEventListener('click', () => copyField(button.dataset.copy).catch(error => toast(error.message, true)));
+});
+document.getElementById('downloadClashButton')?.addEventListener('click', () => {
+  window.location.href = appUrl('/api/export/clash.yml');
 });
 
 refreshDashboard();

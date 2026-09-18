@@ -371,6 +371,89 @@ class PoolExportTests(unittest.TestCase):
         self.assertEqual(len(lines), 8)
         self.assertTrue(all("user-two:pw@11.1.1." in line for line in lines))
 
+    def test_live_proxies_scales_eight_slots_per_account(self):
+        for index in range(1, 3):
+            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, 12)]
+            self.write_account(self.live_record(
+                f"acc{index}@example.com",
+                hosts,
+                proxy_username=f"user-{index}",
+            ))
+        response = self.client.get("/api/export/live-proxies?token=test-export-token")
+        lines = [line for line in response.get_data(as_text=True).splitlines() if line.strip()]
+        self.assertEqual(len(lines), 16)
+        self.assertEqual(sum(1 for line in lines if "user-1:pw@" in line), 8)
+        self.assertEqual(sum(1 for line in lines if "user-2:pw@" in line), 8)
+
+    @patch.object(target.pool, "resin_auth", return_value=("gw-token", "V1"))
+    def test_gpt_gateway_matches_live_slot_count(self, _auth):
+        for index in range(1, 3):
+            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, 12)]
+            self.write_account(self.live_record(
+                f"acc{index}@example.com",
+                hosts,
+                proxy_username=f"user-{index}",
+            ))
+        response = self.client.get("/api/export/gpt-gateway?token=test-export-token")
+        self.assertEqual(response.status_code, 200)
+        lines = [line for line in response.get_data(as_text=True).splitlines() if line.strip()]
+        self.assertEqual(len(lines), 16)
+        self.assertTrue(all(":8970" in line for line in lines))
+        self.assertTrue(all("Nodes.n" in line for line in lines))
+        self.assertIn("Nodes.n01:", lines[0])
+        self.assertIn("Nodes.n16:", lines[-1])
+
+    @patch.object(target.pool, "resin_auth", return_value=("gw-token", "V1"))
+    def test_clash_export_matches_live_slot_count(self, _auth):
+        for index in range(1, 3):
+            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, 12)]
+            self.write_account(self.live_record(
+                f"acc{index}@example.com",
+                hosts,
+                proxy_username=f"user-{index}",
+            ))
+        denied = self.client.get("/api/export/clash.yml")
+        self.assertEqual(denied.status_code, 401)
+        response = self.client.get("/api/export/clash.yml?token=test-export-token")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("type: http", body)
+        self.assertIn("Nodes-01", body)
+        self.assertIn("Nodes-16", body)
+        self.assertEqual(body.count("type: http"), 16)
+        self.assertIn("username: \"Nodes.n01\"", body)
+
+    @patch.object(target.pool, "resin_auth", return_value=("gw-token", "V1"))
+    def test_clash_export_accepts_query_token_even_with_dummy_bearer(self, _auth):
+        hosts = [f"10.1.1.{slot}:10000" for slot in range(1, 12)]
+        self.write_account(self.live_record("acc1@example.com", hosts, proxy_username="user-1"))
+        response = self.client.get(
+            "/api/export/clash.yml?token=test-export-token",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("filename=\"clash.yml\"", response.headers.get("Content-Disposition", ""))
+        path_ok = self.client.get("/api/export/clash.yml/test-export-token")
+        self.assertEqual(path_ok.status_code, 200)
+        with self.client.session_transaction() as session:
+            session["authenticated"] = True
+            session["username"] = target.WEB_USERNAME
+        logged_in = self.client.get("/api/export/clash.yml")
+        self.assertEqual(logged_in.status_code, 200)
+
+    @patch.object(target.pool, "resin_auth", return_value=("gw-token", "V1"))
+    def test_ladder_export_is_base64_uri_list(self, _auth):
+        import base64
+        hosts = [f"10.1.1.{slot}:10000" for slot in range(1, 12)]
+        self.write_account(self.live_record("acc1@example.com", hosts, proxy_username="user-1"))
+        response = self.client.get("/api/export/ladder?token=test-export-token")
+        self.assertEqual(response.status_code, 200)
+        decoded = base64.b64decode(response.get_data(as_text=True).strip()).decode("utf-8")
+        lines = [line for line in decoded.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 8)
+        self.assertTrue(all(line.startswith("http://Nodes.n") for line in lines))
+        self.assertTrue(all(":8970#" in line for line in lines))
+
     @patch.object(target.TASK_STORE, "active", return_value=None)
     @patch.object(target.TASK_STORE, "start_task")
     def test_ensure_capacity_starts_register_task_when_short(self, start, _active):

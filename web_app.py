@@ -416,18 +416,30 @@ def _token_matches(supplied, expected):
     return hmac.compare_digest(left, right)
 
 
-def _request_export_token_value():
+def _request_export_token_candidates():
+    values = []
     header = str(request.headers.get("X-Export-Token") or "").strip()
     if header:
-        return header
+        values.append(header)
     auth = str(request.headers.get("Authorization") or "").strip()
     if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return str(request.args.get("token") or "").strip()
+        values.append(auth[7:].strip())
+    query = str(request.args.get("token") or "").strip()
+    if query:
+        values.append(query)
+    view = str((request.view_args or {}).get("export_token") or "").strip()
+    if view:
+        values.append(view)
+    return values
 
 
 def _request_has_export_token():
-    return _token_matches(_request_export_token_value(), _export_token())
+    expected = _export_token()
+    return any(_token_matches(value, expected) for value in _request_export_token_candidates())
+
+
+def _can_export_clash():
+    return _request_has_export_token() or _is_authenticated()
 
 
 def _pool_snapshot():
@@ -462,21 +474,24 @@ def _subscription_urls():
     public = f"{public_base}/api/export/live-proxies?token={token}"
     gpt_public = f"{public_base}/api/export/gpt-gateway?token={token}"
     gpt_internal = f"http://127.0.0.1:8891/nodes/api/export/gpt-gateway?token={token}"
+    clash_public = f"{public_base}/api/export/clash.yml?token={token}"
+    ladder_public = f"{public_base}/api/export/ladder?token={token}"
     return {
         "resin_internal": internal,
         "resin_public": public,
         "gpt_internal": gpt_internal,
         "gpt_public": gpt_public,
+        "clash_public": clash_public,
+        "ladder_public": ladder_public,
     }
 
 
-def _gpt_gateway_body(settings):
+def _gpt_gateway_body(settings, live_slots):
     token, auth_version = pool.resin_auth(_read_config())
     if not token:
         return ""
-    cap_target = int(settings["target_slots"])
     return "\n".join(pool.gpt_gateway_lines(
-        cap_target,
+        int(live_slots),
         token,
         settings["gateway_host"],
         settings["gateway_port"],
@@ -524,7 +539,9 @@ def _start_pool_loop():
 @app.before_request
 def protect_routes():
     _start_pool_loop()
-    if request.endpoint in {"login", "health", "static", "live_proxies", "gpt_gateway"}:
+    if request.endpoint in {"login", "health", "static", "live_proxies", "gpt_gateway", "clash_export", "ladder_export"}:
+        return None
+    if "/api/export/clash" in str(request.path or ""):
         return None
     if request.endpoint == "ensure_capacity" and _request_has_export_token():
         return None
@@ -607,8 +624,67 @@ def live_proxies():
 def gpt_gateway():
     if not _request_has_export_token():
         return jsonify({"error": "unauthorized"}), 401
-    settings, _entries, _cap = _pool_snapshot()
-    body = _gpt_gateway_body(settings)
+    settings, _entries, cap = _pool_snapshot()
+    body = _gpt_gateway_body(settings, cap["live_slots"])
+    if not body.strip():
+        return jsonify({"error": "resin_proxy_token_missing"}), 503
+    return Response(body, mimetype="text/plain; charset=utf-8")
+
+
+def _clash_body(settings, live_slots):
+    token, auth_version = pool.resin_auth(_read_config())
+    if not token:
+        return ""
+    return pool.clash_yaml(
+        int(live_slots),
+        token,
+        settings["gateway_host"],
+        settings["gateway_port"],
+        auth_version,
+        settings["gateway_platform"],
+    )
+
+
+def _ladder_body(settings, live_slots):
+    token, auth_version = pool.resin_auth(_read_config())
+    if not token:
+        return ""
+    return pool.ladder_base64(
+        int(live_slots),
+        token,
+        settings["gateway_host"],
+        settings["gateway_port"],
+        auth_version,
+        settings["gateway_platform"],
+    )
+
+
+@app.get("/api/export/clash.yml")
+@app.get("/api/export/clash")
+@app.get("/api/export/clash.yml/<export_token>")
+@app.get("/api/export/clash/<export_token>")
+def clash_export(export_token=None):
+    if not _can_export_clash():
+        return jsonify({"error": "unauthorized"}), 401
+    settings, _entries, cap = _pool_snapshot()
+    body = _clash_body(settings, cap["live_slots"])
+    if not body.strip():
+        return jsonify({"error": "resin_proxy_token_missing"}), 503
+    response = Response(body, mimetype="text/yaml; charset=utf-8")
+    response.headers["Content-Disposition"] = 'attachment; filename="clash.yml"'
+    response.headers["Profile-Update-Interval"] = "1"
+    response.headers["Subscription-Userinfo"] = (
+        f"upload=0; download=0; total=0; expire={int(time.time()) + 7 * 86400}"
+    )
+    return response
+
+
+@app.get("/api/export/ladder")
+def ladder_export():
+    if not _request_has_export_token():
+        return jsonify({"error": "unauthorized"}), 401
+    settings, _entries, cap = _pool_snapshot()
+    body = _ladder_body(settings, cap["live_slots"])
     if not body.strip():
         return jsonify({"error": "resin_proxy_token_missing"}), 503
     return Response(body, mimetype="text/plain; charset=utf-8")
@@ -896,6 +972,8 @@ def _pool_public():
         "subscription_url": urls["resin_internal"],
         "subscription_url_public": urls["resin_public"],
         "gpt_subscription_url": urls["gpt_public"],
+        "clash_subscription_url": urls["clash_public"],
+        "ladder_subscription_url": urls["ladder_public"],
         "gpt_gateway_sample": gateway_sample,
         "gpt_gateway_host": f"{settings['gateway_host']}:{settings['gateway_port']}",
         "auth_version": auth_version,

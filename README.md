@@ -60,7 +60,7 @@ cp config.local.json.example config.local.json
 ```json
 {
   "mail_provider": "yunxin",
-  "mail_api_base": "https://mail.152-53-166-184.sslip.io",
+  "mail_api_base": "https://mail.example.com",
   "mail_api_key": "qm_你的密钥",
   "mail_type": "mail",
   "mail_suffix": "mail.com",
@@ -119,7 +119,7 @@ PowerShell 当前窗口配置示例：
 
 ```powershell
 $env:MAIL_PROVIDER = "yunxin"
-$env:MAIL_API_BASE = "https://mail.152-53-166-184.sslip.io"
+$env:MAIL_API_BASE = "https://mail.example.com"
 $env:MAIL_API_KEY = "qm_YOUR_API_KEY"
 $env:MAIL_TYPE = "mail"
 $env:MAIL_SUFFIX = "mail.com"

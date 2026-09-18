@@ -15,5 +15,10 @@
   "turnstile_extension_path": "",
   "web_username": "admin",
   "web_password_hash": "使用 werkzeug.security.generate_password_hash 生成",
-  "web_session_secret": "至少 32 字节的随机字符串"
+  "web_session_secret": "至少 32 字节的随机字符串",
+  "resin_gateway_host": "127.0.0.1",
+  "resin_gateway_port": 8970,
+  "resin_gateway_platform": "Nodes",
+  "pool_slots_per_account": 8,
+  "pool_auto_register": true
 }
