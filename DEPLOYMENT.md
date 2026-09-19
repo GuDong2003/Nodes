@@ -65,7 +65,7 @@ port `443` site.
 - Active release: `/opt/nodes/releases/1216835-yunxin4-dashboard`
 - Previous release: `/opt/nodes/releases/1216835-yunxin3-onboarding`
 - Image: `nodes:1216835-yunxin4-dashboard`
-- Dashboard: `https://tilian.xiaopipiai.com:8443`
+- Dashboard: HTTPS on port `8443` of your own host
 - Automated tests: 16 passed inside the Linux image
 - Browser tests: desktop and 390x844 mobile viewports both passed against the
   public HTTPS deployment; navigation, form states, and horizontal overflow were
