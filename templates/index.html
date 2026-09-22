@@ -85,23 +85,23 @@
 
           <section class="panel pool-panel">
             <div class="panel-heading">
-              <div><h2>Resin / GPT 池</h2><p>有多少有效号就导出多少×8 条代理；Resin 按条数可同时连，加 1 个号就多 8 路</p></div>
+              <div><h2>Resin / GPT 池</h2><p>全量导出有效账号的代理地址，不再抽样；节点数量不等于套餐并发连接数，连通性以 Resin 检测为准。</p></div>
               <button class="secondary-button" type="button" id="ensureCapacityButton">补齐容量</button>
             </div>
             <div class="chain-grid">
               <div><span>有效账号</span><strong id="poolAccounts">—</strong></div>
-              <div><span>有效槽位</span><strong id="poolSlots">—</strong></div>
-              <div><span>缺口账号</span><strong id="poolNeeded">—</strong></div>
+              <div><span>导出代理</span><strong id="poolSlots">—</strong></div>
+              <div><span>缺口账号估算</span><strong id="poolNeeded">—</strong></div>
               <div><span>自动补号</span><strong id="poolAuto">—</strong></div>
             </div>
             <div class="pool-links">
               <label><span>Resin 订阅（本机）</span><input id="poolResinUrl" readonly><button class="text-button" type="button" data-copy="poolResinUrl">复制</button></label>
-              <label><span>GPT 订阅（条数=有效槽，全是 8970 身份）</span><input id="poolGptUrl" readonly><button class="text-button" type="button" data-copy="poolGptUrl">复制</button></label>
+              <label><span>GPT 订阅（条数=导出代理数，全是 8970 身份）</span><input id="poolGptUrl" readonly><button class="text-button" type="button" data-copy="poolGptUrl">复制</button></label>
               <label><span>梯子订阅（Clash / Stash）</span><input id="poolClashUrl" readonly><button class="text-button" type="button" data-copy="poolClashUrl">复制</button><button class="text-button" type="button" id="downloadClashButton">下载 YAML</button></label>
               <label><span>梯子订阅（小火箭 / URI）</span><input id="poolLadderUrl" readonly><button class="text-button" type="button" data-copy="poolLadderUrl">复制</button></label>
               <label><span>GPT 网关样例</span><input id="poolGptSample" readonly><button class="text-button" type="button" data-copy="poolGptSample">复制</button></label>
             </div>
-            <p class="settings-hint pool-hint">Clash Verge 只填「梯子订阅（Clash / Stash）」，必须点复制，不要手打或粘说明里的省略号。拉不下来就点「下载 YAML」，在 Clash Verge 里用本地配置导入。梯子走 8970，条数=有效槽（账号数×8）。</p>
+            <p class="settings-hint pool-hint">Clash Verge 使用「梯子订阅（Clash / Stash）」或下载 YAML 本地导入。网关走 8970，身份条数与实际导出代理数一致，不代表增加套餐流量或并发额度。</p>
           </section>
         </section>
 
@@ -285,6 +285,6 @@
   </dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="sidebar-scrim" id="sidebarScrim"></div>
-  <script src="{{ url_for('static', filename='app.js') }}?v=pool11" defer></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=pool-full1" defer></script>
 </body>
 </html>

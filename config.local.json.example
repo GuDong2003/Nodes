@@ -19,6 +19,6 @@
   "resin_gateway_host": "127.0.0.1",
   "resin_gateway_port": 8970,
   "resin_gateway_platform": "Nodes",
-  "pool_slots_per_account": 8,
+  "pool_expected_proxies_per_account": 100,
   "pool_auto_register": true
 }

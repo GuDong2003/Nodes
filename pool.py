@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Live proxy pool: 8 slots per healthy ProxyScrape account."""
+"""Live proxy pool: export all distinct hosts of each eligible account."""
 
-import hashlib
 import json
 import os
 import re
@@ -11,7 +10,7 @@ from urllib.parse import quote, quote_plus
 
 
 DEFAULT_TARGET_SLOTS = 80
-DEFAULT_SLOTS_PER_ACCOUNT = 8
+DEFAULT_EXPECTED_PROXIES_PER_ACCOUNT = 100
 DEFAULT_MIN_BANDWIDTH = 100 * 1024 * 1024
 DEFAULT_MAX_REGISTER = 5
 DEFAULT_LOOP_SECONDS = 120
@@ -40,15 +39,19 @@ def _as_int(value, default):
 
 def pool_settings(config):
     data = config if isinstance(config, dict) else {}
-    slots = max(1, min(8, _as_int(data.get("pool_slots_per_account"), DEFAULT_SLOTS_PER_ACCOUNT)))
-    target = max(slots, min(800, _as_int(data.get("pool_target_slots"), DEFAULT_TARGET_SLOTS)))
+    # Replenishment estimate only, never a limit on the exported hosts.
+    # The old pool_slots_per_account sampling setting is deliberately ignored.
+    expected = max(1, _as_int(data.get("pool_expected_proxies_per_account"), DEFAULT_EXPECTED_PROXIES_PER_ACCOUNT))
+    target = max(1, min(800, _as_int(data.get("pool_target_slots"), DEFAULT_TARGET_SLOTS)))
     min_bandwidth = max(0, _as_int(data.get("pool_min_bandwidth"), DEFAULT_MIN_BANDWIDTH))
     max_register = max(1, min(5, _as_int(data.get("pool_max_register_per_round"), DEFAULT_MAX_REGISTER)))
     loop_seconds = max(30, min(3600, _as_int(data.get("pool_loop_seconds"), DEFAULT_LOOP_SECONDS)))
     auto_register = True if "pool_auto_register" not in data else _as_bool(data.get("pool_auto_register"))
     return {
         "target_slots": target,
-        "slots_per_account": slots,
+        "slots_per_account": expected,  # Legacy response alias for the estimate.
+        "expected_proxies_per_account": expected,
+        "export_all": True,
         "min_bandwidth": min_bandwidth,
         "max_register_per_round": max_register,
         "loop_seconds": loop_seconds,
@@ -107,16 +110,6 @@ def normalize_hosts(raw):
     return hosts
 
 
-def pick_slots(hosts, count, seed):
-    values = list(hosts)
-    if len(values) <= count:
-        return values
-    return sorted(
-        values,
-        key=lambda host: hashlib.sha256(f"{seed}|{host}".encode("utf-8")).hexdigest(),
-    )[:count]
-
-
 def account_is_live(record, now, min_bandwidth):
     user = str((record or {}).get("proxy_username") or "").strip()
     password = str((record or {}).get("proxy_password") or "").strip()
@@ -141,7 +134,6 @@ def account_is_live(record, now, min_bandwidth):
 
 def live_entries(records, node_dir, settings, now):
     harvested = harvest_ips_by_username(node_dir)
-    slots_per_account = int(settings["slots_per_account"])
     min_bandwidth = int(settings["min_bandwidth"])
     entries = []
     for record in records or []:
@@ -151,14 +143,13 @@ def live_entries(records, node_dir, settings, now):
         password = str(record.get("proxy_password") or "").strip()
         email = str(record.get("email") or "").strip()
         hosts = normalize_hosts(record.get("proxy_ips")) or harvested.get(user) or []
-        slots = pick_slots(hosts, slots_per_account, email or user)
-        if not slots:
+        if not hosts:
             continue
         entries.append({
             "email": email,
             "proxy_username": user,
             "proxy_password": password,
-            "slots": slots,
+            "slots": hosts,
         })
     return entries
 
@@ -166,15 +157,17 @@ def live_entries(records, node_dir, settings, now):
 def capacity(entries, settings):
     live_slots = sum(len(item["slots"]) for item in entries)
     target = int(settings["target_slots"])
-    per_account = int(settings["slots_per_account"])
+    per_account = int(settings["expected_proxies_per_account"])
     shortage = max(0, target - live_slots)
     needed_accounts = (shortage + per_account - 1) // per_account if shortage else 0
     return {
         "live_accounts": len(entries),
         "live_slots": live_slots,
-        "concurrent_slots": live_slots,
+        "concurrent_slots": live_slots,  # Legacy node-count alias, not a concurrency guarantee.
         "target_slots": target,
         "slots_per_account": per_account,
+        "expected_proxies_per_account": per_account,
+        "export_all": True,
         "shortage_slots": shortage,
         "needed_accounts": needed_accounts,
         "max_register_per_round": int(settings["max_register_per_round"]),

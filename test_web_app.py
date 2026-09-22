@@ -372,9 +372,9 @@ class PoolExportTests(unittest.TestCase):
         response = self.client.get("/api/export/live-proxies")
         self.assertEqual(response.status_code, 401)
 
-    def test_live_proxies_emits_eight_ips_per_live_account(self):
-        hosts = [f"10.1.1.{index}:10000" for index in range(1, 13)]
-        self.write_account(self.live_record("one@example.com", hosts, proxy_username="user-one"))
+    def test_live_proxies_emits_all_ips_per_live_account(self):
+        hosts = [f"10.1.1.{index}:10000" for index in range(1, 101)]
+        self.write_account(self.live_record("one@example.com", hosts + hosts[:2], proxy_username="user-one"))
         self.write_account(self.live_record(
             "dead@example.com",
             ["9.9.9.9:1"],
@@ -385,8 +385,8 @@ class PoolExportTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.content_type.startswith("text/plain"))
         lines = [line for line in response.get_data(as_text=True).splitlines() if line.strip()]
-        self.assertEqual(len(lines), 8)
-        self.assertTrue(all(line.startswith("http://user-one:pw@") for line in lines))
+        self.assertEqual(len(lines), 100)
+        self.assertEqual(set(lines), {f"http://user-one:pw@{host}" for host in hosts})
         self.assertTrue(all("9.9.9.9" not in line for line in lines))
         again = self.client.get("/api/export/live-proxies?token=test-export-token")
         self.assertEqual(again.get_data(as_text=True), response.get_data(as_text=True))
@@ -400,12 +400,12 @@ class PoolExportTests(unittest.TestCase):
         response = self.client.get("/api/export/live-proxies?token=test-export-token")
         self.assertEqual(response.status_code, 200)
         lines = [line for line in response.get_data(as_text=True).splitlines() if line.strip()]
-        self.assertEqual(len(lines), 8)
+        self.assertEqual(len(lines), 9)
         self.assertTrue(all("user-two:pw@11.1.1." in line for line in lines))
 
-    def test_live_proxies_scales_eight_slots_per_account(self):
-        for index in range(1, 3):
-            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, 12)]
+    def test_live_proxies_uses_each_accounts_actual_host_count(self):
+        for index, count in ((1, 100), (2, 37)):
+            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, count + 1)]
             self.write_account(self.live_record(
                 f"acc{index}@example.com",
                 hosts,
@@ -413,14 +413,37 @@ class PoolExportTests(unittest.TestCase):
             ))
         response = self.client.get("/api/export/live-proxies?token=test-export-token")
         lines = [line for line in response.get_data(as_text=True).splitlines() if line.strip()]
-        self.assertEqual(len(lines), 16)
-        self.assertEqual(sum(1 for line in lines if "user-1:pw@" in line), 8)
-        self.assertEqual(sum(1 for line in lines if "user-2:pw@" in line), 8)
+        self.assertEqual(len(lines), 137)
+        self.assertEqual(sum(1 for line in lines if "user-1:pw@" in line), 100)
+        self.assertEqual(sum(1 for line in lines if "user-2:pw@" in line), 37)
+
+    def test_live_export_ignores_legacy_limit_and_target(self):
+        hosts = [f"10.1.1.{slot}:10000" for slot in range(1, 126)]
+        self.write_account(self.live_record("all@example.com", hosts))
+        with patch.object(target, "_read_config", return_value={
+            "pool_slots_per_account": 8, "pool_target_slots": 8,
+        }):
+            response = self.client.get("/api/export/live-proxies?token=test-export-token")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_data(as_text=True).splitlines()), 125)
+
+    def test_pool_capacity_uses_actual_nodes_and_estimates_replenishment(self):
+        self.write_account(self.live_record("all@example.com", [f"10.1.1.{i}:80" for i in range(1, 101)]))
+        with self.client.session_transaction() as session:
+            session.update(authenticated=True, username=target.WEB_USERNAME, csrf_token="test-csrf")
+        with patch.object(target, "_read_config", return_value={
+            "pool_slots_per_account": 8, "pool_target_slots": 250,
+        }):
+            response = self.client.get("/api/pool")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["pool"]["live_slots"], 100)
+        self.assertEqual(response.json["pool"]["shortage_slots"], 150)
+        self.assertEqual(response.json["pool"]["needed_accounts"], 2)
 
     @patch.object(target.pool, "resin_auth", return_value=("gw-token", "V1"))
     def test_gpt_gateway_matches_live_slot_count(self, _auth):
         for index in range(1, 3):
-            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, 12)]
+            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, 101)]
             self.write_account(self.live_record(
                 f"acc{index}@example.com",
                 hosts,
@@ -429,16 +452,16 @@ class PoolExportTests(unittest.TestCase):
         response = self.client.get("/api/export/gpt-gateway?token=test-export-token")
         self.assertEqual(response.status_code, 200)
         lines = [line for line in response.get_data(as_text=True).splitlines() if line.strip()]
-        self.assertEqual(len(lines), 16)
+        self.assertEqual(len(lines), 200)
         self.assertTrue(all(":8970" in line for line in lines))
         self.assertTrue(all("Nodes.n" in line for line in lines))
         self.assertIn("Nodes.n01:", lines[0])
-        self.assertIn("Nodes.n16:", lines[-1])
+        self.assertIn("Nodes.n200:", lines[-1])
 
     @patch.object(target.pool, "resin_auth", return_value=("gw-token", "V1"))
     def test_clash_export_matches_live_slot_count(self, _auth):
         for index in range(1, 3):
-            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, 12)]
+            hosts = [f"10.{index}.1.{slot}:10000" for slot in range(1, 101)]
             self.write_account(self.live_record(
                 f"acc{index}@example.com",
                 hosts,
@@ -451,8 +474,8 @@ class PoolExportTests(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertIn("type: http", body)
         self.assertIn("Nodes-01", body)
-        self.assertIn("Nodes-16", body)
-        self.assertEqual(body.count("type: http"), 16)
+        self.assertIn("Nodes-200", body)
+        self.assertEqual(body.count("type: http"), 200)
         self.assertIn("username: \"Nodes.n01\"", body)
 
     @patch.object(target.pool, "resin_auth", return_value=("gw-token", "V1"))
@@ -476,13 +499,13 @@ class PoolExportTests(unittest.TestCase):
     @patch.object(target.pool, "resin_auth", return_value=("gw-token", "V1"))
     def test_ladder_export_is_base64_uri_list(self, _auth):
         import base64
-        hosts = [f"10.1.1.{slot}:10000" for slot in range(1, 12)]
+        hosts = [f"10.1.1.{slot}:10000" for slot in range(1, 101)]
         self.write_account(self.live_record("acc1@example.com", hosts, proxy_username="user-1"))
         response = self.client.get("/api/export/ladder?token=test-export-token")
         self.assertEqual(response.status_code, 200)
         decoded = base64.b64decode(response.get_data(as_text=True).strip()).decode("utf-8")
         lines = [line for line in decoded.splitlines() if line.strip()]
-        self.assertEqual(len(lines), 8)
+        self.assertEqual(len(lines), 100)
         self.assertTrue(all(line.startswith("http://Nodes.n") for line in lines))
         self.assertTrue(all(":8970#" in line for line in lines))
 
@@ -500,7 +523,7 @@ class PoolExportTests(unittest.TestCase):
             headers={"X-CSRF-Token": "test-csrf"},
         )
         self.assertEqual(response.status_code, 200)
-        start.assert_called_once_with(5, 1)
+        start.assert_called_once_with(1, 1)
         self.assertEqual(response.json["task"]["id"], "task-fill")
 
 

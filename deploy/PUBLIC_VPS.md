@@ -28,6 +28,11 @@
 
 Resin 已创建 `Nodes` 平台及订阅，每 2 分钟从 Docker 内网
 `http://dashboard:8080/nodes/api/export/live-proxies` 拉取带令牌的订阅。
+订阅按有效账号的实际代理地址全量导出，保留账号内去重和过期/余额过滤；
+旧 `pool_slots_per_account` 配置不再限制导出（即使仍写着 8）。
+`pool_expected_proxies_per_account` 默认 100，只用于估算补号数量；
+`pool_target_slots` 只用于计算补池缺口，不会截断导出列表。
+API 保留 `live_slots`、`concurrent_slots` 等旧字段名作为节点数量别名，不保证同等并发连接数。
 只导入此平台的 `Nodes/` 节点，绝不能把 GPT/Clash 的 Resin 网关订阅反导回 Resin，
 否则会形成循环代理。
 

@@ -54,7 +54,7 @@ function renderPool(pool) {
   if (!pool) return;
   const live = pool.live_slots || 0;
   const accounts = pool.live_accounts || 0;
-  const slots = `${live} 可连（${accounts}×8）`;
+  const slots = `${live} 条（${accounts} 个账号）`;
   document.getElementById('poolAccounts').textContent = accounts || '—';
   document.getElementById('poolSlots').textContent = slots;
   document.getElementById('poolNeeded').textContent = pool.needed_accounts ?? 0;
@@ -64,7 +64,7 @@ function renderPool(pool) {
   document.getElementById('poolClashUrl').value = pool.clash_subscription_url || '';
   document.getElementById('poolLadderUrl').value = pool.ladder_subscription_url || '';
   document.getElementById('poolGptSample').value = pool.gpt_gateway_sample || '';
-  document.getElementById('metricProxiesNote').textContent = `Resin 槽 ${slots}`;
+  document.getElementById('metricProxiesNote').textContent = `Resin 订阅 ${slots}`;
 }
 
 async function copyField(id) {

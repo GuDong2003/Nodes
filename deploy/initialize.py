@@ -34,7 +34,7 @@ def initialize(root, domain):
         "captcha_timeout": 180,
         "captcha_poll_interval": 5,
         "pool_auto_register": False,
-        "pool_slots_per_account": 8,
+        "pool_expected_proxies_per_account": 100,
         "internal_base_url": "http://dashboard:8080/nodes",
         "resin_gateway_host": domain,
         "resin_gateway_port": 8970,
