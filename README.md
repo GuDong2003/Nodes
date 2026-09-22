@@ -110,7 +110,10 @@ Admin 密码或令牌写进 Nodes。创建邮箱使用公开的 `/api/new_addres
 ```
 
 `mail_domain` 应填写 Temp Email 的可用域名；`mail_suffix` 和 `mail_type` 对 `cfmail`
-不生效。若该服务启用了自己的 Turnstile 校验，需要先在服务端关闭或另行扩展 token 配置。
+不生效。创建地址时要求服务端生成随机子域名，例如 `name@random.example.com`，并拒绝
+回退到根域名地址；基础域名必须配置通配 MX，且需要列入 Temp Email 的
+`randomSubdomainDomains`。若该服务启用了自己的 Turnstile 校验，需要先在服务端关闭或
+另行扩展 token 配置。
 
 收件接口返回 `raw` 原始邮件时，Nodes 会先解码 MIME（含 quoted-printable、Base64
 和邮件声明的字符集），再从 HTML/纯文本正文提取验证码，不扫描附件，也不把验证码写入日志。
@@ -127,9 +130,11 @@ Resin 的 live-proxies 订阅导出每个有效账号的全部去重代理地址
 ### 复用已生成节点作为出口
 
 在「代理输出 → 注册出口代理」勾选「使用已生成节点」，点击保存即可通过现有 Resin 池
-发送 HTTP API 请求，无需手动填代理地址或令牌。`proxy_use_pool` 默认关闭；开启后优先于
-手动代理，关闭后恢复原有 `proxy_enabled/http_proxy/https_proxy` 配置，不覆盖手动输入。
-此开关不改变 Chromium 的代理设置。
+发送 HTTP API 请求并加载注册浏览器，无需手动填代理地址或令牌。`proxy_use_pool` 默认关闭；
+开启后优先于手动代理，关闭后恢复原有 `proxy_enabled/http_proxy/https_proxy` 配置，不覆盖
+手动输入。代理启用时，Chromium 使用临时认证扩展向 Resin 提交凭据；认证或连接失败会终止
+当前尝试，不会回退到 VPS 直连。代理关闭时 Chromium 保持默认网络行为。
+手动模式只填写 HTTP 或 HTTPS 任一地址时，该地址会同时用于两种协议，避免另一类请求绕过代理。
 
 Docker 部署通过 `NODES_RESIN_PROXY_URL=http://resin:8970` 指定内部网关；其他部署可在
 服务端配置 `resin_internal_proxy_url`，默认 `http://127.0.0.1:8970`。地址不应含用户名、密码、

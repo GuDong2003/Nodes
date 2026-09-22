@@ -233,6 +233,40 @@ class TaskDiagnosticsTests(unittest.TestCase):
                 self.assertIn("HTTP 429", "\n".join(events))
                 self.assertNotIn("private-response-body", "\n".join(events))
 
+    def test_non_retryable_mailbox_response_stops_account_attempts(self):
+        with patch.object(target.worker, "_register_once", side_effect=target.worker.NonRetryableError(
+                "Cloudflare 临时邮箱未返回随机子域名地址")) as once:
+            result = target.worker.register_one(
+                1, True, str(self.account_dir / "accounts.jsonl"),
+                str(self.node_dir / "proxies.txt"), max_attempts=3,
+            )
+        self.assertIsNone(result)
+        self.assertEqual(once.call_count, 1)
+
+    def test_worker_exception_logs_do_not_include_raw_secret(self):
+        secret = "http://private-user:private-password@private.example/secret"
+        with patch.object(target.worker, "_register_once", side_effect=RuntimeError(secret)), \
+             patch.object(target.worker, "log") as log:
+            target.worker.register_one(
+                1, True, str(self.account_dir / "accounts.jsonl"),
+                str(self.node_dir / "proxies.txt"), max_attempts=1,
+            )
+        rendered = " ".join(str(call.args[0]) for call in log.call_args_list)
+        self.assertNotIn(secret, rendered)
+        self.assertIn("RuntimeError", rendered)
+
+    def test_round_summary_does_not_print_password(self):
+        with patch("builtins.print") as printed:
+            target.worker.print_round_summary(
+                [{"email": "private@example.com", "password": "private-password",
+                  "verified": True, "proxy_count": 100}],
+                1, 12.0, "/tmp/accounts.jsonl", "/tmp/proxies.txt",
+            )
+        rendered = " ".join(str(call.args[0]) for call in printed.call_args_list)
+        self.assertNotIn("private-password", rendered)
+        self.assertNotIn("private@example.com", rendered)
+        self.assertIn("verified=True", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

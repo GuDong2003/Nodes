@@ -3,8 +3,11 @@
 import copy
 import json
 import os
+import stat
+import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -63,6 +66,8 @@ class ProxyReuseEnvironmentTests(unittest.TestCase):
         self.assertEqual(proxies["https"], "http://secure:pw@manual.example:3129")
 
     def test_turning_off_without_manual_proxy_clears_generated_proxy(self):
+        os.environ["ALL_PROXY"] = "http://system.proxy:8080"
+        os.environ["all_proxy"] = "http://system.proxy:8080"
         worker._apply_proxy_env()
         self.assertIn("HTTP_PROXY", os.environ)
         self.config["proxy_use_pool"] = False
@@ -70,20 +75,117 @@ class ProxyReuseEnvironmentTests(unittest.TestCase):
         proxies = requests.utils.get_environ_proxies("https://upstream.example")
         self.assertNotIn("http", proxies)
         self.assertNotIn("https", proxies)
+        self.assertNotIn("ALL_PROXY", os.environ)
+        self.assertNotIn("all_proxy", os.environ)
 
     def test_turning_off_restores_https_only_without_leaving_pool_http(self):
-        self.config.update(proxy_enabled=True, http_proxy="")
+        self.config.update(proxy_use_pool=False, proxy_enabled=True, http_proxy="")
         worker._apply_proxy_env()
-        self.config["proxy_use_pool"] = False
+        proxies = requests.utils.get_environ_proxies("http://upstream.example")
+        self.assertEqual(proxies["http"], "http://secure:pw@manual.example:3129")
+        self.assertEqual(proxies["https"], "http://secure:pw@manual.example:3129")
         worker._apply_proxy_env()
         proxies = requests.utils.get_environ_proxies("https://upstream.example")
-        self.assertNotIn("http", proxies)
+        self.assertEqual(proxies["http"], "http://secure:pw@manual.example:3129")
         self.assertEqual(proxies["https"], "http://secure:pw@manual.example:3129")
 
     def test_missing_token_fails_instead_of_silently_using_direct_or_manual(self):
         self.config.pop("resin_proxy_token")
         with self.assertRaisesRegex(RuntimeError, "Resin"):
             worker._apply_proxy_env()
+
+    def _capture_browser_launch(self):
+        captured = {}
+
+        class BrowserStarted(Exception):
+            pass
+
+        class FakeChromiumOptions:
+            def __init__(self):
+                self.arguments = []
+                self.extensions = []
+                self.proxy = None
+
+            def auto_port(self):
+                return self
+
+            def set_argument(self, value):
+                self.arguments.append(value)
+                return self
+
+            def add_extension(self, path):
+                self.extensions.append(path)
+                return self
+
+            def set_proxy(self, value):
+                self.proxy = value
+                self.arguments.append(f"--proxy-server={value}")
+                return self
+
+        def start_browser(options):
+            captured["proxy"] = options.proxy
+            captured["arguments"] = list(options.arguments)
+            captured["extensions"] = list(options.extensions)
+            generated = [Path(path) for path in options.extensions if Path(path).name.startswith(
+                "nodes-proxy-auth-"
+            )]
+            captured["generated"] = generated
+            if generated:
+                root = generated[0]
+                captured["root_mode"] = stat.S_IMODE(root.stat().st_mode)
+                captured["manifest"] = json.loads((root / "manifest.json").read_text())
+                captured["background"] = (root / "background.js").read_text()
+            raise BrowserStarted
+
+        fake_module = types.ModuleType("DrissionPage")
+        fake_module.ChromiumOptions = FakeChromiumOptions
+        fake_module.Chromium = start_browser
+        with patch.dict(sys.modules, {"DrissionPage": fake_module}), \
+             patch.object(worker, "EXTENSION_PATH", "/nonexistent-turnstile-extension"):
+            with self.assertRaises(BrowserStarted):
+                worker.solve_turnstile_browser(headless=True, timeout=30)
+        return captured
+
+    def test_browser_uses_authenticated_pool_proxy_and_cleans_temporary_credentials(self):
+        captured = self._capture_browser_launch()
+
+        self.assertEqual(captured["proxy"], "http://resin:8970")
+        self.assertNotIn("proxy:token", captured["proxy"])
+        self.assertEqual(len(captured["generated"]), 1)
+        self.assertEqual(captured["root_mode"], 0o700)
+        self.assertEqual(captured["manifest"]["manifest_version"], 3)
+        self.assertIn("Nodes.nodes-ops", captured["background"])
+        self.assertIn("proxy:token", captured["background"])
+        self.assertIn("details.isProxy", captured["background"])
+        self.assertFalse(captured["generated"][0].exists())
+
+    def test_browser_uses_default_network_when_all_proxy_switches_are_off(self):
+        self.config.update(proxy_use_pool=False, proxy_enabled=False)
+        captured = self._capture_browser_launch()
+
+        self.assertIsNone(captured["proxy"])
+        self.assertEqual(captured["generated"], [])
+        self.assertFalse(any(value.startswith("--proxy-server=") for value in captured["arguments"]))
+
+    def test_enabled_manual_proxy_without_an_address_fails_before_browser_launch(self):
+        self.config.update(
+            proxy_use_pool=False,
+            proxy_enabled=True,
+            http_proxy="",
+            https_proxy="",
+        )
+        with self.assertRaisesRegex(RuntimeError, "代理已启用"):
+            self._capture_browser_launch()
+
+    def test_browser_uses_manual_https_proxy_when_pool_is_off(self):
+        self.config.update(proxy_use_pool=False, proxy_enabled=True)
+        captured = self._capture_browser_launch()
+
+        self.assertEqual(captured["proxy"], "http://manual.example:3129")
+        self.assertNotIn("secure", captured["proxy"])
+        self.assertNotIn("pw", captured["proxy"])
+        self.assertIn("secure", captured["background"])
+        self.assertIn("pw", captured["background"])
 
 
 class ProxyReuseSettingsTests(unittest.TestCase):
@@ -158,6 +260,51 @@ class ProxyReuseSettingsTests(unittest.TestCase):
         response = self.toggle(True)
         self.assertEqual(response.status_code, 409)
         self.assertEqual(json.loads(self.config_file.read_text()), self.config)
+
+    def test_enabled_manual_proxy_requires_an_address(self):
+        response = self.client.put(
+            "/api/settings",
+            json={
+                "proxy_use_pool": False,
+                "proxy_enabled": True,
+                "http_proxy": "",
+                "https_proxy": "",
+            },
+            headers={"X-CSRF-Token": "csrf"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("代理地址", response.json["error"])
+        self.assertEqual(json.loads(self.config_file.read_text()), self.config)
+
+    def test_invalid_manual_proxy_url_is_rejected_before_saving(self):
+        response = self.client.put(
+            "/api/settings",
+            json={
+                "proxy_use_pool": False,
+                "proxy_enabled": True,
+                "http_proxy": "http://user:pw@proxy.example:3128/path",
+            },
+            headers={"X-CSRF-Token": "csrf"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("代理", response.json["error"])
+        self.assertEqual(json.loads(self.config_file.read_text()), self.config)
+
+    def test_proxy_port_must_be_in_range(self):
+        response = self.client.put(
+            "/api/settings",
+            json={
+                "proxy_use_pool": False,
+                "proxy_enabled": True,
+                "http_proxy": "http://proxy.example:0",
+            },
+            headers={"X-CSRF-Token": "csrf"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("端口", response.json["error"])
 
 
 if __name__ == "__main__":

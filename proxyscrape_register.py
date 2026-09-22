@@ -19,7 +19,9 @@ import sys
 import time
 import json
 import random
+import shutil
 import string
+import tempfile
 import threading
 import html as _html
 import requests
@@ -28,7 +30,7 @@ from contextlib import contextmanager
 from email import policy
 from email.errors import MessageError
 from email.parser import Parser
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import pool
 
@@ -44,7 +46,7 @@ def _load_local_config():
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception as e:
-        print(f"[!] 读取本地配置失败: {e}")
+        print(f"[!] 读取本地配置失败: {type(e).__name__}")
         return {}
 
 
@@ -180,33 +182,57 @@ _ACCOUNT_DIR = os.path.join(_BASE, "account")
 _NODE_DIR = os.path.join(_BASE, "node")
 
 
-def _apply_proxy_env():
-    enabled = str(_LOCAL_CONFIG.get("proxy_enabled") or "").strip().lower() in {"1", "true", "yes", "on"}
-    use_pool = str(_LOCAL_CONFIG.get("proxy_use_pool") or "").strip().lower() in {"1", "true", "yes", "on"}
-    http_proxy = str(_LOCAL_CONFIG.get("http_proxy") or "").strip()
-    https_proxy = str(_LOCAL_CONFIG.get("https_proxy") or "").strip() or http_proxy
-    no_proxy = str(_LOCAL_CONFIG.get("no_proxy") or "localhost,127.0.0.1").strip()
+def _registration_proxy_settings(config=None):
+    data = config if isinstance(config, dict) else _LOCAL_CONFIG
+    enabled = str(data.get("proxy_enabled") or "").strip().lower() in {"1", "true", "yes", "on"}
+    use_pool = str(data.get("proxy_use_pool") or "").strip().lower() in {"1", "true", "yes", "on"}
+    http_proxy = str(data.get("http_proxy") or "").strip()
+    https_proxy = str(data.get("https_proxy") or "").strip()
+    if http_proxy and not https_proxy:
+        https_proxy = http_proxy
+    elif https_proxy and not http_proxy:
+        http_proxy = https_proxy
+    no_proxy = str(data.get("no_proxy") or "localhost,127.0.0.1").strip()
     if use_pool:
-        http_proxy = https_proxy = pool.registration_proxy_url(_LOCAL_CONFIG)
+        http_proxy = https_proxy = pool.registration_proxy_url(data)
         enabled = True
         bypass = [item.strip() for item in no_proxy.split(",") if item.strip()]
-        internal_base = str(_LOCAL_CONFIG.get("internal_base_url") or "")
+        internal_base = str(data.get("internal_base_url") or "")
         for host in ("localhost", "127.0.0.1", "::1", "dashboard", "resin",
                      urlsplit(http_proxy).hostname, urlsplit(internal_base).hostname):
             if host and host not in bypass:
                 bypass.append(host)
         no_proxy = ",".join(bypass)
-    if enabled and (http_proxy or https_proxy):
+    if enabled and not (http_proxy or https_proxy):
+        raise RuntimeError("代理已启用，但未配置代理地址")
+    return {
+        "enabled": enabled,
+        "http_proxy": http_proxy,
+        "https_proxy": https_proxy,
+        "no_proxy": no_proxy,
+    }
+
+
+def _apply_proxy_env():
+    settings = _registration_proxy_settings()
+    if settings["enabled"]:
+        http_proxy = settings["http_proxy"]
+        https_proxy = settings["https_proxy"]
         for key, value in (("HTTP_PROXY", http_proxy), ("http_proxy", http_proxy),
                            ("HTTPS_PROXY", https_proxy), ("https_proxy", https_proxy)):
             if value:
                 os.environ[key] = value
             else:
                 os.environ.pop(key, None)
-        os.environ["NO_PROXY"] = no_proxy
-        os.environ["no_proxy"] = no_proxy
+        os.environ["ALL_PROXY"] = http_proxy
+        os.environ["all_proxy"] = http_proxy
+        os.environ["NO_PROXY"] = settings["no_proxy"]
+        os.environ["no_proxy"] = settings["no_proxy"]
         return
-    for key in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+    for key in (
+        "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+        "ALL_PROXY", "all_proxy",
+    ):
         os.environ.pop(key, None)
 
 
@@ -266,6 +292,10 @@ _file_lock = threading.Lock()
 _tls = threading.local()
 
 
+class NonRetryableError(RuntimeError):
+    """A validated configuration/provider response must not be retried."""
+
+
 def log(msg):
     tag = getattr(_tls, "tag", "")
     with _print_lock:
@@ -292,6 +322,7 @@ def diagnostic_error(error):
         "未配置 MAIL_API_KEY",
         "captcha_provider=2captcha，但未配置 captcha_api_key",
         "2Captcha 返回了非 JSON 响应",
+        "Cloudflare 临时邮箱未返回随机子域名地址",
     }
     if str(error) in known_messages:
         result += f"：{error}"
@@ -346,12 +377,14 @@ def _retry(fn, tries=3, delay=2.0, what=""):
     for i in range(1, tries + 1):
         try:
             return fn()
+        except NonRetryableError:
+            raise
         except Exception as e:
             last = e
             if i < tries:
                 _diagnostic_failure(e)
                 _diagnostic(f"当前步骤将重试（{i}/{tries}）")
-                log(f"[retry {i}/{tries}] {what or 'op'} 失败: {str(e)[:100]}，{delay:.0f}s 后重试")
+                log(f"[retry {i}/{tries}] {what or 'op'} 失败: {diagnostic_error(e)}，{delay:.0f}s 后重试")
                 time.sleep(delay)
     raise last
 
@@ -412,7 +445,7 @@ def yyds_create_mailbox():
         r.raise_for_status()
         return r.json()["data"]
     d = _retry(_do, tries=3, what="建邮箱")
-    log(f"临时邮箱: {d['address']}")
+    log("临时邮箱已创建")
     return d["address"], d["token"]
 
 
@@ -432,7 +465,7 @@ def yyds_wait_code(address, timeout=180, interval=5):
             txt = _html.unescape(re.sub(r"<[^>]+>", " ", html))
             mo = re.search(r"verification code:\s*([A-Za-z0-9]{6,})", txt, re.I)
             if mo:
-                log(f"收到验证码: {mo.group(1)}  (主题: {d.get('subject')})")
+                log("收到验证码")
                 return mo.group(1)
         time.sleep(interval)
     raise TimeoutError("等验证码超时")
@@ -464,7 +497,7 @@ def yunxin_create_mailbox():
         return address
 
     address = _retry(_do, tries=3, what="建邮箱")
-    log(f"临时邮箱: {address}")
+    log("临时邮箱已创建")
     return address, None
 
 
@@ -500,7 +533,7 @@ def yunxin_wait_code(address, timeout=180, interval=5):
         for mail in data.get("results") or []:
             code = _code_from_yunxin_mail(mail)
             if code:
-                log(f"收到验证码: {code}  (主题: {mail.get('subject')})")
+                log("收到验证码")
                 return code
         time.sleep(interval)
     raise TimeoutError("等验证码超时")
@@ -569,7 +602,7 @@ def cfmail_create_mailbox():
             "name": local,
             "domain": domain,
             "cf_token": "",
-            "enableRandomSubdomain": False,
+            "enableRandomSubdomain": True,
             "enablePrefix": False,
         }
         response = requests.post(
@@ -594,10 +627,14 @@ def cfmail_create_mailbox():
             address = str(_cfmail_payload(settings.json()).get("address") or "").strip()
         if not address:
             raise RuntimeError("Cloudflare 临时邮箱响应缺少 address")
+        address_domain = address.rsplit("@", 1)[-1].lower()
+        base_domain = domain.lower().lstrip(".")
+        if address_domain == base_domain or not address_domain.endswith(f".{base_domain}"):
+            raise NonRetryableError("Cloudflare 临时邮箱未返回随机子域名地址")
         return address, token
 
     address, token = _retry(_do, tries=3, what="建 Cloudflare 临时邮箱")
-    log(f"临时邮箱: {address}")
+    log("临时邮箱已创建")
     return address, token
 
 
@@ -724,6 +761,76 @@ def _read_state(tab):
         return {}
 
 
+def _browser_proxy_plan(config=None):
+    settings = _registration_proxy_settings(config)
+    if not settings["enabled"]:
+        return None
+    raw = settings["https_proxy"] or settings["http_proxy"]
+    try:
+        endpoint = urlsplit(raw)
+        port = endpoint.port
+    except ValueError as error:
+        raise RuntimeError("浏览器出口代理地址无效") from error
+    valid = (
+        endpoint.scheme in {"http", "https"}
+        and endpoint.hostname
+        and endpoint.path in {"", "/"}
+        and not endpoint.query
+        and not endpoint.fragment
+    )
+    if not valid:
+        raise RuntimeError("浏览器出口代理地址无效")
+    host = endpoint.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    server = f"{endpoint.scheme}://{host}" + (f":{port}" if port else "")
+    return {
+        "server": server,
+        "username": unquote(endpoint.username or ""),
+        "password": unquote(endpoint.password or ""),
+    }
+
+
+def _write_private_text(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _create_proxy_auth_extension(username, password):
+    root = tempfile.mkdtemp(prefix="nodes-proxy-auth-")
+    os.chmod(root, 0o700)
+    try:
+        manifest = {
+            "manifest_version": 3,
+            "name": "Nodes Proxy Authentication",
+            "version": "1.0.0",
+            "permissions": ["webRequest", "webRequestAuthProvider"],
+            "host_permissions": ["<all_urls>"],
+            "background": {"service_worker": "background.js"},
+        }
+        credentials = json.dumps(
+            {"username": username, "password": password}, ensure_ascii=True,
+        )
+        background = (
+            f"const credentials = Object.freeze({credentials});\n"
+            "chrome.webRequest.onAuthRequired.addListener(\n"
+            "  (details) => details.isProxy ? {authCredentials: credentials} : {},\n"
+            "  {urls: ['<all_urls>']},\n"
+            "  ['blocking']\n"
+            ");\n"
+        )
+        _write_private_text(
+            os.path.join(root, "manifest.json"),
+            json.dumps(manifest, ensure_ascii=True, separators=(",", ":")),
+        )
+        _write_private_text(os.path.join(root, "background.js"), background)
+        return root
+    except Exception:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+
+
 def solve_turnstile_browser(headless=False, timeout=120):
     """打开真实 sign-up 页，全程检测状态（不盲等固定时间）：
       1) 等页面 ready 且 window.turnstile API 就绪
@@ -736,29 +843,43 @@ def solve_turnstile_browser(headless=False, timeout=120):
     _diagnostic(f"浏览器验证实际超时：{timeout} 秒")
     from DrissionPage import Chromium, ChromiumOptions
 
-    opts = ChromiumOptions()
-    opts.auto_port()  # 每个实例独立端口 + 独立临时用户目录（支持并发多开）
-    for flag in ("--no-first-run", "--no-sandbox", "--disable-dev-shm-usage",
-                 "--disable-background-networking", "--mute-audio",
-                 "--disable-gpu", "--window-size=1280,900"):
-        opts.set_argument(flag)
-    if headless:
-        # 真 headless 过不了 Turnstile（Cloudflare 检测无头）。改用「隐形有头」：
-        # 有头浏览器保证过检，窗口挪到屏幕外，启动后再 hide()，用户完全看不见。
-        opts.set_argument("--window-position=-32000,-32000")
-    if os.path.exists(EXTENSION_PATH):
-        opts.add_extension(EXTENSION_PATH)
-    else:
-        log(f"[!] 找不到 turnstilePatch 扩展: {EXTENSION_PATH}")
-
-    browser = Chromium(opts)
-    tab = browser.latest_tab
-    if headless:
-        try:
-            tab.set.window.hide()   # Windows 下真正隐藏窗口，进程照常渲染，Turnstile 不受影响
-        except Exception:
-            pass
+    auth_extension = None
+    browser = None
     try:
+        opts = ChromiumOptions()
+        opts.auto_port()  # 每个实例独立端口 + 独立临时用户目录（支持并发多开）
+        for flag in ("--no-first-run", "--no-sandbox", "--disable-dev-shm-usage",
+                     "--disable-background-networking", "--mute-audio",
+                     "--disable-gpu", "--window-size=1280,900"):
+            opts.set_argument(flag)
+        if headless:
+            # 真 headless 过不了 Turnstile（Cloudflare 检测无头）。改用「隐形有头」：
+            # 有头浏览器保证过检，窗口挪到屏幕外，启动后再 hide()，用户完全看不见。
+            opts.set_argument("--window-position=-32000,-32000")
+        if os.path.exists(EXTENSION_PATH):
+            opts.add_extension(EXTENSION_PATH)
+        else:
+            log(f"[!] 找不到 turnstilePatch 扩展: {EXTENSION_PATH}")
+
+        proxy_plan = _browser_proxy_plan()
+        if proxy_plan:
+            opts.set_proxy(proxy_plan["server"])
+            if proxy_plan["username"] or proxy_plan["password"]:
+                auth_extension = _create_proxy_auth_extension(
+                    proxy_plan["username"], proxy_plan["password"],
+                )
+                opts.add_extension(auth_extension)
+            _diagnostic("浏览器出口代理：已启用；连接失败时不回退直连")
+        else:
+            _diagnostic("浏览器出口代理：未启用，使用默认网络")
+
+        browser = Chromium(opts)
+        tab = browser.latest_tab
+        if headless:
+            try:
+                tab.set.window.hide()   # Windows 下真正隐藏窗口，进程照常渲染，Turnstile 不受影响。
+            except Exception:
+                pass
         deadline = time.time() + timeout
         _diagnostic_stage("验证码/页面加载")
         log("浏览器打开 sign-up 页…")
@@ -840,10 +961,13 @@ def solve_turnstile_browser(headless=False, timeout=120):
             time.sleep(1.0)
         raise TimeoutError("Turnstile 求解超时（已检测到各阶段状态，token 未生成）")
     finally:
-        try:
-            browser.quit()
-        except Exception:
-            pass
+        if browser is not None:
+            try:
+                browser.quit()
+            except Exception:
+                pass
+        if auth_extension:
+            shutil.rmtree(auth_extension, ignore_errors=True)
 
 
 def _captcha_post(path, payload):
@@ -932,11 +1056,10 @@ def register(email, password, turnstile_token):
     }, timeout=30)
     _diagnostic(f"注册接口响应：HTTP {r.status_code}")
     try:
-        response_log = dict(r.json())
-        if response_log.get("access_token"):
-            response_log["access_token"] = "<redacted>"
-        log(f"注册响应 {r.status_code}: "
-            f"{json.dumps(response_log, ensure_ascii=False)[:300]}")
+        response_data = r.json()
+        keys = sorted(response_data) if isinstance(response_data, dict) else []
+        token_note = "; access_token=<redacted>" if isinstance(response_data, dict) and response_data.get("access_token") else ""
+        log(f"注册响应 {r.status_code}: keys={keys}{token_note}")
     except Exception:
         log(f"注册响应 {r.status_code}: <non-JSON body, {len(r.content)} bytes>")
     r.raise_for_status()
@@ -962,7 +1085,7 @@ def verify_email(session, access_token, code):
                      headers={"Authorization": f"Bearer {access_token}"},
                      files={"verificationCode": (None, code)}, timeout=30)
     _diagnostic(f"验证邮箱接口响应：HTTP {r.status_code}")
-    log(f"验邮箱响应 {r.status_code}: {r.text[:200]}")
+    log(f"验邮箱响应 HTTP {r.status_code}")
     return r.ok
 
 
@@ -984,7 +1107,7 @@ def whoami(session, access_token):
         get_current_user(session, access_token)
         return True
     except Exception as e:
-        log(f"/me 校验失败: {e}")
+        log(f"/me 校验失败: {diagnostic_error(e)}")
         return False
 
 
@@ -1273,7 +1396,7 @@ def _register_once(headless, node_file):
         verified = verify_email(session, access_token, code)
     except Exception as e:
         _diagnostic_failure(e)
-        log(f"[!] 邮箱验证环节: {e}（账号已注册，token 有效）")
+        log(f"[!] 邮箱验证环节: {diagnostic_error(e)}（账号已注册，token 有效）")
 
     # 邮箱验证后显式领取 Premium trial，再拉取凭证 / API 密钥 / 代理列表。
     p_user = p_pass = ""
@@ -1308,7 +1431,7 @@ def _register_once(headless, node_file):
                 )
             except Exception as error:
                 _diagnostic_failure(error)
-                log(f"[!] accounts-summary: {error}")
+                log(f"[!] accounts-summary: {diagnostic_error(error)}")
             try:
                 _diagnostic_stage("创建 API 密钥")
                 context = fetch_permission_context(session, access_token)
@@ -1319,10 +1442,10 @@ def _register_once(headless, node_file):
                 log("API 密钥已创建，权限 %d 项" % len(api_key.get("permissions") or []))
             except Exception as error:
                 _diagnostic_failure(error)
-                log(f"[!] 创建 API 密钥失败: {error}")
+                log(f"[!] 创建 API 密钥失败: {diagnostic_error(error)}")
         except Exception as e:
             _diagnostic_failure(e)
-            log(f"[!] 拉代理失败: {e}")
+            log(f"[!] 拉代理失败: {diagnostic_error(e)}")
 
     record = {
         "email": email, "password": password,
@@ -1349,9 +1472,13 @@ def register_one(idx, headless, acc_file, node_file, max_attempts=3):
             log(f"—— 第 {attempt}/{max_attempts} 次尝试 ——")
         try:
             rec = _register_once(headless, node_file)
+        except NonRetryableError as e:
+            _diagnostic_failure(e)
+            log(f"[x] 本次尝试不可重试：{diagnostic_error(e)}")
+            break
         except Exception as e:
             _diagnostic_failure(e)
-            log(f"[x] 本次尝试失败: {str(e)[:120]}")
+            log(f"[x] 本次尝试失败: {diagnostic_error(e)}")
             rec = None
 
         if rec:
@@ -1359,14 +1486,14 @@ def register_one(idx, headless, acc_file, node_file, max_attempts=3):
             if rec.get("proxy_count", 0) > 0:
                 _diagnostic_stage("保存账号")
                 save_account(rec, acc_file)
-                log(f"[✓] 完成  verified={rec['verified']}  proxies={rec['proxy_count']}  {rec['email']}")
+                log(f"[✓] 完成  verified={rec['verified']}  proxies={rec['proxy_count']}")
                 return rec
             log("注册成功但未拿到代理，换邮箱重试")
 
     if last:
         _diagnostic_stage("保存未完成账号")
         save_account(last, acc_file)
-        log(f"[!] 重试用尽，存半成品  verified={last['verified']}  proxies={last.get('proxy_count',0)}  {last['email']}")
+        log(f"[!] 重试用尽，存半成品  verified={last['verified']}  proxies={last.get('proxy_count',0)}")
     else:
         log(f"[x] {max_attempts} 次尝试均失败，放弃 #{idx}")
     return last
@@ -1407,6 +1534,17 @@ def guide():
     return count, threads, headless
 
 
+def print_round_summary(ok, count, elapsed, acc_file, node_file):
+    total_proxies = sum(r.get("proxy_count", 0) for r in ok)
+    print("\n" + "=" * 52)
+    print(f"  完成 {len(ok)}/{count}  ·  用时 {elapsed:.0f}s  ·  代理共 {total_proxies} 个")
+    print(f"  账号 → account/{os.path.basename(acc_file)}")
+    print(f"  代理 → node/{os.path.basename(node_file)}")
+    for r in ok:
+        print(f"    verified={r['verified']}  |  proxies={r.get('proxy_count', 0)}")
+    print("=" * 52 + "\n")
+
+
 def run_round(count, threads, headless):
     # 每轮独立文件（时间戳命名），不追加旧文件
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -1423,19 +1561,12 @@ def run_round(count, threads, headless):
             except Exception as e:
                 r = None
                 with _print_lock:
-                    print(f"[worker error] {e}", flush=True)
+                    print(f"[worker error] {diagnostic_error(e)}", flush=True)
             if r:
                 ok.append(r)
 
     dt = time.time() - t0
-    total_proxies = sum(r.get("proxy_count", 0) for r in ok)
-    print("\n" + "=" * 52)
-    print(f"  完成 {len(ok)}/{count}  ·  用时 {dt:.0f}s  ·  代理共 {total_proxies} 个")
-    print(f"  账号 → account/{os.path.basename(acc_file)}")
-    print(f"  代理 → node/{os.path.basename(node_file)}")
-    for r in ok:
-        print(f"    {r['email']}  |  {r['password']}  |  verified={r['verified']}  |  proxies={r.get('proxy_count',0)}")
-    print("=" * 52 + "\n")
+    print_round_summary(ok, count, dt, acc_file, node_file)
 
 
 def main():

@@ -79,7 +79,7 @@ class MailProviderTests(unittest.TestCase):
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = {
-            "address": "abc123@gudong226.com",
+            "address": "abc123@random-subdomain.gudong226.com",
             "jwt": "address-jwt",
         }
         with patch.object(register, "random_mailbox_local", return_value="abc123"), \
@@ -88,13 +88,16 @@ class MailProviderTests(unittest.TestCase):
              patch.object(register.requests, "post", return_value=response) as post:
             address, token = register.cfmail_create_mailbox()
 
-        self.assertEqual((address, token), ("abc123@gudong226.com", "address-jwt"))
+        self.assertEqual(
+            (address, token),
+            ("abc123@random-subdomain.gudong226.com", "address-jwt"),
+        )
         self.assertEqual(post.call_args.args[0], "https://temp.example/api/new_address")
         self.assertEqual(post.call_args.kwargs["json"], {
             "name": address.split("@", 1)[0],
             "domain": "gudong226.com",
             "cf_token": "",
-            "enableRandomSubdomain": False,
+            "enableRandomSubdomain": True,
             "enablePrefix": False,
         })
 
@@ -115,6 +118,21 @@ class MailProviderTests(unittest.TestCase):
         self.assertEqual(get.call_args.args[0], "https://temp.example/api/mails")
         self.assertEqual(get.call_args.kwargs["headers"]["Authorization"], "Bearer address-jwt")
         self.assertEqual(get.call_args.kwargs["params"], {"limit": 20, "offset": 0})
+
+    def test_cfmail_rejects_a_root_domain_address_when_random_subdomain_is_required(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "address": "abc123@gudong226.com",
+            "jwt": "address-jwt",
+        }
+        with patch.object(register, "MAIL_API_BASE", "https://temp.example"), \
+             patch.object(register, "MAIL_DOMAIN", "gudong226.com"), \
+             patch.object(register.requests, "post", return_value=response) as post, \
+             patch.object(register.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "随机子域名"):
+                register.cfmail_create_mailbox()
+        self.assertEqual(post.call_count, 1)
 
     def test_provider_dispatch_keeps_yyds_compatibility(self):
         with patch.object(register, "MAIL_PROVIDER", "yyds"), \

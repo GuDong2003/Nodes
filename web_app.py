@@ -11,6 +11,7 @@ from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from flask import (
     Flask,
@@ -114,6 +115,28 @@ def _clean_url(value, field):
     return text.rstrip("/")
 
 
+def _clean_proxy_url(value, field):
+    text = _clean_url(value, field)
+    if not text:
+        return ""
+    try:
+        parsed = urlsplit(text)
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError(f"{field} 格式无效") from error
+    if port is None or not 1 <= port <= 65535:
+        raise ValueError(f"{field} 端口必须在 1-65535 之间")
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(f"{field} 格式无效")
+    return text
+
+
 def _apply_settings(payload):
     if TASK_STORE.active():
         raise RuntimeError("有注册任务正在运行，请结束后再改配置")
@@ -161,9 +184,12 @@ def _apply_settings(payload):
     next_config["no_proxy"] = str(merged["no_proxy"] or "localhost,127.0.0.1").strip() or "localhost,127.0.0.1"
 
     if not next_config["proxy_use_pool"] and next_config["http_proxy"]:
-        _clean_url(next_config["http_proxy"], "HTTP 代理")
+        next_config["http_proxy"] = _clean_proxy_url(next_config["http_proxy"], "HTTP 代理")
     if not next_config["proxy_use_pool"] and next_config["https_proxy"]:
-        _clean_url(next_config["https_proxy"], "HTTPS 代理")
+        next_config["https_proxy"] = _clean_proxy_url(next_config["https_proxy"], "HTTPS 代理")
+    if (next_config["proxy_enabled"] and not next_config["proxy_use_pool"]
+            and not (next_config["http_proxy"] or next_config["https_proxy"])):
+        raise ValueError("启用手动出口代理时必须填写代理地址")
     if mail_provider in {"yunxin", "cfmail"} and not next_config["mail_api_base"]:
         raise ValueError("该邮箱提供方需要填写 API 地址")
     if mail_provider == "cfmail" and not next_config["mail_domain"]:
