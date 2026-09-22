@@ -425,7 +425,6 @@ def _cfmail_headers(address_token=""):
     return {
         "Accept": "application/json",
         "Authorization": f"Bearer {token}",
-        "X-User-Token": token,
     }
 
 
@@ -495,7 +494,10 @@ def cfmail_wait_code(address, address_token, timeout=180, interval=5):
         )
         response.raise_for_status()
         data = _cfmail_payload(response.json())
-        for mail in data.get("results") or []:
+        mails = data.get("results")
+        if not isinstance(mails, list):
+            mails = data.get("mails") or data.get("emails") or []
+        for mail in mails:
             code = _code_from_yunxin_mail(mail)
             if code:
                 log(f"收到验证码: {code}  (主题: {mail.get('subject')})")

@@ -124,6 +124,16 @@ class MailProviderTests(unittest.TestCase):
             self.assertEqual(register.create_mailbox(), ("a@example.com", "jwt"))
             create.assert_called_once_with()
 
+    def test_wait_code_dispatch_passes_cfmail_jwt(self):
+        with patch.object(register, "MAIL_PROVIDER", "cfmail"), \
+             patch.object(register, "cfmail_wait_code", return_value="code") as wait:
+            result = register.wait_mail_code(
+                "a@example.com", timeout=12, interval=6, address_token="jwt",
+            )
+
+        self.assertEqual(result, "code")
+        wait.assert_called_once_with("a@example.com", "jwt", timeout=12, interval=6)
+
 
 if __name__ == "__main__":
     unittest.main()
