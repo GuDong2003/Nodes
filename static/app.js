@@ -1,6 +1,6 @@
 const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
 const APP_BASE = (document.querySelector('meta[name="app-base"]')?.content || '').replace(/\/$/, '');
-const state = { dashboard: null, exports: null, settings: null, currentView: 'dashboard' };
+const state = { dashboard: null, exports: null, settings: null, currentView: 'dashboard', openTaskId: null };
 const titles = {
   dashboard: ['仪表盘', '注册任务与资源状态'],
   accounts: ['账号管理', '导入删除账号，同步过期时间和剩余流量'],
@@ -82,6 +82,10 @@ function toast(message, error = false) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { element.className = 'toast'; }, 3200);
 }
+
+const taskDialog = window.NodesTaskDialog.create({
+  document, state, api, toast, escapeHtml, statusLabel,
+});
 
 function showView(view) {
   state.currentView = view;
@@ -336,19 +340,7 @@ async function loadTasks() {
   } catch (error) { toast(error.message, true); }
 }
 
-async function openTask(taskId) {
-  try {
-    const { task } = await api(`/api/tasks/${encodeURIComponent(taskId)}`);
-    document.getElementById('dialogTaskId').textContent = task.id;
-    document.getElementById('dialogStats').innerHTML = `
-      <div><span>进度</span><strong>${task.completed}/${task.requested}</strong></div>
-      <div><span>成功</span><strong>${task.successes}</strong></div>
-      <div><span>代理</span><strong>${task.proxy_count}</strong></div>
-      <div><span>状态</span><strong>${escapeHtml(statusLabel(task.status))}</strong></div>`;
-    document.getElementById('dialogLogs').innerHTML = (task.logs || []).map(log => `<div class="log-entry">${escapeHtml(log)}</div>`).join('');
-    document.getElementById('taskDialog').showModal();
-  } catch (error) { toast(error.message, true); }
-}
+function openTask(taskId) { return taskDialog.open(taskId); }
 
 document.querySelectorAll('.nav-item[data-view]').forEach(item => item.addEventListener('click', () => showView(item.dataset.view)));
 document.querySelectorAll('[data-go]').forEach(item => item.addEventListener('click', () => showView(item.dataset.go)));
@@ -387,7 +379,7 @@ document.getElementById('logoutButton').addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' });
   window.location.href = appUrl('/login');
 });
-document.getElementById('closeDialog').addEventListener('click', () => document.getElementById('taskDialog').close());
+document.getElementById('closeDialog').addEventListener('click', () => taskDialog.close());
 document.getElementById('closeAccountDialog').addEventListener('click', () => document.getElementById('accountDialog').close());
 document.getElementById('permSelectAll').addEventListener('click', () => {
   document.querySelectorAll('input[name="acc_permission"]').forEach(item => { item.checked = true; });
@@ -640,4 +632,5 @@ loadSettings();
 setInterval(() => {
   refreshDashboard();
   if (state.currentView === 'tasks') loadTasks();
+  taskDialog.refresh();
 }, 4000);
