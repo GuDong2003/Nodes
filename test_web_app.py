@@ -123,7 +123,7 @@ class DashboardApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 202)
-        start.assert_called_once_with(2, 2)
+        start.assert_called_once_with(2, 2, max_attempts=3)
 
     def test_cfmail_settings_are_accepted(self):
         with tempfile.TemporaryDirectory() as directory:

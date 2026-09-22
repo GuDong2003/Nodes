@@ -24,6 +24,7 @@ import threading
 import html as _html
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from email import policy
 from email.errors import MessageError
 from email.parser import Parser
@@ -271,8 +272,76 @@ def log(msg):
         print(f"[{time.strftime('%H:%M:%S')}]{tag} {msg}", flush=True)
 
 
+def diagnostic_error(error):
+    """Allow-list error details: never persist response bodies, URLs or credentials."""
+    result = type(error).__name__
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int) and 100 <= status <= 599:
+        result += f" (HTTP {status})"
+    known_messages = {
+        "等待页面/turnstile API 就绪超时",
+        "等待 cf-turnstile-response 挂载超时",
+        "Turnstile 求解超时（已检测到各阶段状态，token 未生成）",
+        "等 Cloudflare 临时邮箱验证码超时",
+        "等验证码超时",
+        "cfmail 需要配置 MAIL_DOMAIN",
+        "Cloudflare 临时邮箱响应缺少 address JWT",
+        "Cloudflare 临时邮箱响应缺少 address",
+        "未配置 YYDS_API_KEY 环境变量",
+        "未配置 MAIL_API_KEY",
+        "captcha_provider=2captcha，但未配置 captcha_api_key",
+        "2Captcha 返回了非 JSON 响应",
+    }
+    if str(error) in known_messages:
+        result += f"：{error}"
+    return result
+
+
+@contextmanager
+def task_diagnostics(callback, retry_limit=3):
+    """Scope task events and request retry limits to this worker thread only."""
+    previous = getattr(_tls, "diagnostics", None)
+    _tls.diagnostics = {"callback": callback, "stage": "准备", "retry_limit": retry_limit}
+    try:
+        yield
+    finally:
+        _tls.diagnostics = previous
+
+
+def _diagnostic(message):
+    context = getattr(_tls, "diagnostics", None)
+    if context:
+        try:
+            context["callback"](f"[{time.strftime('%H:%M:%S')}] {message}")
+        except Exception as error:
+            # Observability must not stop credential output or mask the original error.
+            if not context.get("write_warning"):
+                context["write_warning"] = True
+                try:
+                    log(f"[!] 任务诊断日志写入失败：{type(error).__name__}")
+                except Exception:
+                    pass
+
+
+def _diagnostic_stage(stage):
+    context = getattr(_tls, "diagnostics", None)
+    if context:
+        context["stage"] = stage
+        _diagnostic(f"{stage}：开始")
+
+
+def _diagnostic_failure(error):
+    context = getattr(_tls, "diagnostics", None)
+    if context:
+        _diagnostic(f"{context['stage']}失败：{diagnostic_error(error)}")
+
+
 def _retry(fn, tries=3, delay=2.0, what=""):
     """通用重试：捕获异常，退避后重试；用尽则抛最后一次异常。"""
+    context = getattr(_tls, "diagnostics", None)
+    if context:
+        tries = min(tries, context["retry_limit"])
     last = None
     for i in range(1, tries + 1):
         try:
@@ -280,6 +349,8 @@ def _retry(fn, tries=3, delay=2.0, what=""):
         except Exception as e:
             last = e
             if i < tries:
+                _diagnostic_failure(e)
+                _diagnostic(f"当前步骤将重试（{i}/{tries}）")
                 log(f"[retry {i}/{tries}] {what or 'op'} 失败: {str(e)[:100]}，{delay:.0f}s 后重试")
                 time.sleep(delay)
     raise last
@@ -661,6 +732,8 @@ def solve_turnstile_browser(headless=False, timeout=120):
       4) 检测到 challenge iframe 后进 iframe 点 checkbox（每步都检测，出来才动手）
       5) 轮询直到 token（≥80）出现
     每一步独立检测 + 日志，卡在哪一步一目了然。"""
+    _diagnostic_stage("验证码/浏览器启动")
+    _diagnostic(f"浏览器验证实际超时：{timeout} 秒")
     from DrissionPage import Chromium, ChromiumOptions
 
     opts = ChromiumOptions()
@@ -687,10 +760,12 @@ def solve_turnstile_browser(headless=False, timeout=120):
             pass
     try:
         deadline = time.time() + timeout
+        _diagnostic_stage("验证码/页面加载")
         log("浏览器打开 sign-up 页…")
         tab.get(PS_SIGNUP_PAGE)
 
         # ① 等页面 ready 且 turnstile API 就绪（网络慢，检测到才继续，不盲等）
+        _diagnostic_stage("验证码/等待页面与 API 就绪")
         while time.time() < deadline:
             st = _read_state(tab)
             if st.get("ready") and st.get("hasApi"):
@@ -701,6 +776,7 @@ def solve_turnstile_browser(headless=False, timeout=120):
         log("页面就绪，turnstile API 已加载")
 
         # ② 填占位表单，然后检测 cf-turnstile-response input 是否挂载（不 sleep 后瞎找）
+        _diagnostic_stage("验证码/等待组件挂载")
         tab.run_js(_FILL_JS)
         input_seen = False
         while time.time() < deadline:
@@ -717,6 +793,7 @@ def solve_turnstile_browser(headless=False, timeout=120):
         log("检测到 turnstile input 已挂载")
 
         # ③ 短暂检测原生 challenge iframe 是否自行出现；若半挂载不出，则自己 render 兜底
+        _diagnostic_stage("验证码/等待挑战结果")
         render_deadline = min(deadline, time.time() + 12)
         while time.time() < render_deadline:
             st = _read_state(tab)
@@ -775,6 +852,7 @@ def _captcha_post(path, payload):
         response = requests.post(
             f"{CAPTCHA_API_BASE}{path}", json=payload, timeout=30,
         )
+        _diagnostic(f"打码接口响应：HTTP {response.status_code}")
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
@@ -852,6 +930,7 @@ def register(email, password, turnstile_token):
         "password": password,
         "cf_turnstile_token": turnstile_token,
     }, timeout=30)
+    _diagnostic(f"注册接口响应：HTTP {r.status_code}")
     try:
         response_log = dict(r.json())
         if response_log.get("access_token"):
@@ -872,6 +951,7 @@ def register(email, password, turnstile_token):
 def resend_code(session, access_token):
     """触发发送/重发验证码（注册后不会自动发，必须调一次）。"""
     r = session.post(PS_RESEND, headers={"Authorization": f"Bearer {access_token}"}, timeout=30)
+    _diagnostic(f"发送验证码接口响应：HTTP {r.status_code}")
     log(f"resend 触发: {r.status_code}")
     return r.ok
 
@@ -881,12 +961,14 @@ def verify_email(session, access_token, code):
     r = session.post(PS_VERIFY_EMAIL,
                      headers={"Authorization": f"Bearer {access_token}"},
                      files={"verificationCode": (None, code)}, timeout=30)
+    _diagnostic(f"验证邮箱接口响应：HTTP {r.status_code}")
     log(f"验邮箱响应 {r.status_code}: {r.text[:200]}")
     return r.ok
 
 
 def get_current_user(session, access_token):
     r = session.post(PS_ME, headers={"Authorization": f"Bearer {access_token}"}, timeout=30)
+    _diagnostic(f"读取账号接口响应：HTTP {r.status_code}")
     if not r.ok:
         raise RuntimeError(f"/me 失败 {r.status_code}: {r.text[:200]}")
     data = r.json()
@@ -922,6 +1004,7 @@ def ensure_premium_trial(session, access_token):
         return None
 
     r = session.post(PS_CLAIM_TRIAL, headers=headers, json={}, timeout=30)
+    _diagnostic(f"领取试用接口响应：HTTP {r.status_code}")
     if not r.ok:
         raise RuntimeError(f"Premium trial 领取失败 {r.status_code}: {r.text[:200]}")
     data = r.json()
@@ -956,6 +1039,7 @@ def _auth_headers(access_token):
 
 
 def _json_or_error(response, what):
+    _diagnostic(f"服务接口响应：HTTP {response.status_code}")
     try:
         data = response.json()
     except ValueError:
@@ -1172,16 +1256,23 @@ def _register_once(headless, node_file):
     """单次尝试：建邮箱→打码→注册→验证→拉代理。返回 rec（不落盘账号）。
     建邮箱/打码/注册任一失败抛异常，交给外层重试。"""
     password = "Ps" + "".join(random.choices(string.ascii_letters + string.digits, k=10)) + "!9"
+    _diagnostic_stage("创建临时邮箱")
     email, mailbox_token = create_mailbox()        # 失败抛异常 → 外层重试
+    _diagnostic_stage("获取验证码令牌")
     token = solve_turnstile(headless=headless)     # 失败抛异常 → 外层重试
+    _diagnostic_stage("提交注册")
     session, access_token, userdata = register(email, password, token)  # 同上
 
     verified = False
     try:
+        _diagnostic_stage("发送邮箱验证码")
         resend_code(session, access_token)
+        _diagnostic_stage("等待验证码邮件")
         code = wait_mail_code(email, timeout=180, address_token=mailbox_token)
+        _diagnostic_stage("验证邮箱")
         verified = verify_email(session, access_token, code)
     except Exception as e:
+        _diagnostic_failure(e)
         log(f"[!] 邮箱验证环节: {e}（账号已注册，token 有效）")
 
     # 邮箱验证后显式领取 Premium trial，再拉取凭证 / API 密钥 / 代理列表。
@@ -1193,26 +1284,33 @@ def _register_once(headless, node_file):
     api_key = {}
     account_summary = None
     if not verified:
+        _diagnostic("邮箱未验证，跳过领取试用和导出代理")
         log("邮箱未验证，trial 未激活，跳过拉代理")
     else:
         try:
+            _diagnostic_stage("领取试用")
             userdata, account_id = activate_trial_and_get_account(session, access_token)
             trial_claimed = True
+            _diagnostic_stage("拉取代理")
             p_user, p_pass, plist, extras = fetch_proxies(access_token, account_id)
+            _diagnostic_stage("保存代理")
             save_proxies(p_user, p_pass, plist, node_file)
             p_count = len(plist)
             extras = dict(extras)
             extras["proxy_ips"] = plist
             log(f"拉取代理 {p_count} 个")
             try:
+                _diagnostic_stage("读取账号摘要")
                 summary = fetch_accounts_summary(session, access_token)
                 account_summary = next(
                     (item for item in summary if item.get("id") == account_id),
                     summary[0] if summary else None,
                 )
             except Exception as error:
+                _diagnostic_failure(error)
                 log(f"[!] accounts-summary: {error}")
             try:
+                _diagnostic_stage("创建 API 密钥")
                 context = fetch_permission_context(session, access_token)
                 allowed = context.get("allowed_permissions") or list(DEFAULT_API_PERMISSIONS)
                 api_key = provision_api_key(
@@ -1220,8 +1318,10 @@ def _register_once(headless, node_file):
                 )
                 log("API 密钥已创建，权限 %d 项" % len(api_key.get("permissions") or []))
             except Exception as error:
+                _diagnostic_failure(error)
                 log(f"[!] 创建 API 密钥失败: {error}")
         except Exception as e:
+            _diagnostic_failure(e)
             log(f"[!] 拉代理失败: {e}")
 
     record = {
@@ -1244,23 +1344,27 @@ def register_one(idx, headless, acc_file, node_file, max_attempts=3):
     _tls.tag = f" #{idx}"
     last = None
     for attempt in range(1, max_attempts + 1):
+        _diagnostic(f"尝试 {attempt}/{max_attempts}")
         if attempt > 1:
             log(f"—— 第 {attempt}/{max_attempts} 次尝试 ——")
         try:
             rec = _register_once(headless, node_file)
         except Exception as e:
+            _diagnostic_failure(e)
             log(f"[x] 本次尝试失败: {str(e)[:120]}")
             rec = None
 
         if rec:
             last = rec
             if rec.get("proxy_count", 0) > 0:
+                _diagnostic_stage("保存账号")
                 save_account(rec, acc_file)
                 log(f"[✓] 完成  verified={rec['verified']}  proxies={rec['proxy_count']}  {rec['email']}")
                 return rec
             log("注册成功但未拿到代理，换邮箱重试")
 
     if last:
+        _diagnostic_stage("保存未完成账号")
         save_account(last, acc_file)
         log(f"[!] 重试用尽，存半成品  verified={last['verified']}  proxies={last.get('proxy_count',0)}  {last['email']}")
     else:

@@ -271,7 +271,9 @@ class TaskStore:
                 None,
             )
 
-    def start_task(self, count, concurrency):
+    def start_task(self, count, concurrency, max_attempts=3):
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 3:
+            raise ValueError("每个账号的尝试次数必须为 1-3 的整数")
         with self.lock:
             if self.active():
                 raise RuntimeError("已有注册任务在运行")
@@ -281,6 +283,7 @@ class TaskStore:
                 "status": "queued",
                 "requested": count,
                 "concurrency": concurrency,
+                "max_attempts": max_attempts,
                 "completed": 0,
                 "successes": 0,
                 "partials": 0,
@@ -326,7 +329,14 @@ class TaskStore:
         proxy_path = str(NODE_DIR / task["proxy_file"])
 
         def execute(index):
-            return worker.register_one(index, True, account_path, proxy_path)
+            attempts = task.get("max_attempts", 3)
+            with worker.task_diagnostics(
+                lambda message: self._event(task_id, f"#{index} {message}"),
+                retry_limit=attempts,
+            ):
+                return worker.register_one(
+                    index, True, account_path, proxy_path, max_attempts=attempts,
+                )
 
         with ThreadPoolExecutor(max_workers=task["concurrency"]) as executor:
             futures = {
@@ -342,13 +352,14 @@ class TaskStore:
                     proxies = int((record or {}).get("proxy_count") or 0)
                     success = proxies > 0
                     partial = bool(record) and not success
-                    message = (
-                        f"#{index} 完成，导出 {proxies} 个代理"
-                        if success
-                        else f"#{index} 未完整产出，已保留诊断记录"
-                    )
+                    if success:
+                        message = f"#{index} 完成，导出 {proxies} 个代理"
+                    elif partial:
+                        message = f"#{index} 未完整产出，已保存未完成账号；原因见上方日志"
+                    else:
+                        message = f"#{index} 失败，未生成账号记录；原因见上方日志"
                 except Exception as error:
-                    message = f"#{index} 失败：{_safe_error(error)}"
+                    message = f"#{index} 失败：{worker.diagnostic_error(error)}"
                 with self.lock:
                     current = self._find(task_id)
                     if not current:
@@ -1415,8 +1426,11 @@ def create_task():
         return jsonify({"error": "注册数量必须在 1-100 之间"}), 400
     if not 1 <= concurrency <= min(8, count):
         return jsonify({"error": "并发数必须在 1-8 之间，且不能超过注册数量"}), 400
+    max_attempts = payload.get("max_attempts", 3)
+    if type(max_attempts) is not int or not 1 <= max_attempts <= 3:
+        return jsonify({"error": "每个账号的尝试次数必须为 1-3 的整数"}), 400
     try:
-        task = TASK_STORE.start_task(count, concurrency)
+        task = TASK_STORE.start_task(count, concurrency, max_attempts=max_attempts)
     except RuntimeError as error:
         return jsonify({"error": str(error)}), 409
     return jsonify({"task": task}), 202
