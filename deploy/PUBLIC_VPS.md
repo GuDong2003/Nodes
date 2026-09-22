@@ -7,6 +7,7 @@
 
 - `https://ps.gudong226.com/` 跳转到 Nodes `/nodes/`，用户名 `admin`。
 - `https://ps.gudong226.com/ui/` 为 Resin 控制台，使用独立管理员令牌登录。
+- 两边侧栏分别有「打开 Resin」「打开 Nodes Ops」普通链接，在新标签页打开，不携带凭据。
 - HTTP/SOCKS5 代理入口为 `ps.gudong226.com:8970`，例如用户名 `Nodes.n01`，
   密码为独立代理令牌。此端口禁止管理 API 和 URL 反向代理。
 - **8970 是普通 HTTP/SOCKS5，不是 TLS 代理入口**。HTTPS 目标的内容仍由
@@ -80,7 +81,8 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 本地测试：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 NODES_DISABLE_POOL_LOOP=1 NODES_CONFIG_FILE=/tmp/nodes-unconfigured.json uv run --isolated --no-project --python 3.12 --with requests --with 'Flask>=3.1,<4' python -m unittest -q test_turnstile_solver test_web_app tests.test_mail_provider test_public_deployment test_deploy_resin test_proxy_reuse
+PYTHONDONTWRITEBYTECODE=1 NODES_DISABLE_POOL_LOOP=1 NODES_CONFIG_FILE=/tmp/nodes-unconfigured.json uv run --isolated --no-project --python 3.12 --with requests --with 'Flask>=3.1,<4' python -m unittest -q test_turnstile_solver test_web_app tests.test_mail_provider test_public_deployment test_deploy_resin test_proxy_reuse test_panel_links
+node --test tests/panel-links.test.cjs
 ```
 
 线上 smoke test 使用现有登录凭据，验证 TLS、登录、Cookie、CSRF、无变化配置保存、
@@ -92,6 +94,19 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 ```
 
 ## Caddy 与回滚
+
+Resin 仍使用官方二进制/前端资源，不需要重新编译。Caddy 为 `/ui/` 页面提供
+`deploy/resin-nav/index.html` 入口副本，仅比官方入口多加载一个 `panel-links.js`，
+用来在侧栏添加普通链接。JS/CSS 等资源和管理 API 仍请求原 Resin 服务。
+入口文件部署在 `/opt/new-api/assets/nodes-resin-nav/index.html`，利用 Caddy 已有的只读
+`/srv/assets` 挂载。升级 Resin 时需同步入口中的资源文件名；当前对应固定的 1.2.0 镜像。
+不包含登录凭据，不读取 Cookie/localStorage；撤回该页面路由即恢复原 Resin 页面。
+
+首次部署链接时，先复制入口文件再校验并 reload Caddy；仅写入本项目专用子目录：
+
+```bash
+install -D -m 644 /opt/nodes/deploy/resin-nav/index.html /opt/new-api/assets/nodes-resin-nav/index.html
+```
 
 现有 Caddy 容器 `new-api-caddy` 使用 host 网络。仅在
 `/opt/new-api/Caddyfile` 末尾新增 `deploy/ps.Caddyfile` 中的站点。

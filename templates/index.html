@@ -6,7 +6,7 @@
   <meta name="csrf-token" content="{{ csrf_token }}">
   <meta name="app-base" content="{{ app_base }}">
   <title>Nodes Ops</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=pool11">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=panel-links1">
 </head>
 <body>
   <div class="app-shell">
@@ -22,6 +22,7 @@
         <button class="nav-item" data-view="captcha"><span class="nav-icon">码</span><span>打码接口</span></button>
         <button class="nav-item" data-view="proxies"><span class="nav-icon">代</span><span>代理输出</span></button>
         <button class="nav-item" data-view="tasks"><span class="nav-icon">志</span><span>任务日志</span></button>
+        <a class="nav-item nav-panel-link" id="open-resin" href="https://ps.gudong226.com/ui/dashboard" target="_blank" rel="noopener noreferrer"><span class="nav-icon" aria-hidden="true">↗</span><span>打开 Resin</span></a>
       </nav>
       <div class="sidebar-footer">
         <div class="user-row"><span class="user-avatar">{{ username[:1]|upper }}</span><span>{{ username }}</span></div>
@@ -287,6 +288,6 @@
   </dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="sidebar-scrim" id="sidebarScrim"></div>
-  <script src="{{ url_for('static', filename='app.js') }}?v=proxy-pool1" defer></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=panel-links1" defer></script>
 </body>
 </html>

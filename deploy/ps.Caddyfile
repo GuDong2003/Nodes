@@ -6,7 +6,21 @@ ps.gudong226.com {
         reverse_proxy 127.0.0.1:8891
     }
 
-    @resin path /ui /ui/* /api/v1/* /healthz
+    @resin_ui path /ui /ui/*
+    handle @resin_ui {
+        route {
+            @resin_document path_regexp resin_document ^/ui(/[^.]*)?$
+            handle @resin_document {
+                root * /srv/assets/nodes-resin-nav
+                rewrite * /index.html
+                header Cache-Control "no-store"
+                file_server
+            }
+            reverse_proxy 127.0.0.1:2260
+        }
+    }
+
+    @resin path /api/v1/* /healthz
     handle @resin {
         reverse_proxy 127.0.0.1:2260
     }

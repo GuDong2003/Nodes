@@ -40,6 +40,7 @@ button { cursor: pointer; }
 .nav-item { height: 44px; width: 100%; border: 0; border-radius: 6px; display: flex; align-items: center; gap: 12px; padding: 0 12px; color: #b7c8d7; background: transparent; text-align: left; font-weight: 600; }
 .nav-item:hover { background: rgba(255,255,255,.06); color: #fff; }
 .nav-item.active { background: var(--blue); color: #fff; }
+.nav-panel-link { text-decoration: none; margin-top: 8px; }
 .nav-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 5px; background: rgba(255,255,255,.09); font-size: 11px; }
 .sidebar-footer { margin-top: auto; padding: 16px; border-top: 1px solid rgba(255,255,255,.08); }
 .user-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #fff; font-weight: 600; }
@@ -241,4 +242,3 @@ tbody tr.clickable:hover { background: #f7faff; cursor: pointer; }
   .login-status { margin-top: 24px; padding-top: 14px; }
   .login-form-panel { padding: 38px 28px; align-items: start; }
 }
-

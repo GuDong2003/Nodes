@@ -86,7 +86,7 @@ function toast(message, error = false) {
 function showView(view) {
   state.currentView = view;
   document.querySelectorAll('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
-  document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
+  document.querySelectorAll('.nav-item[data-view]').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   document.getElementById('pageTitle').textContent = titles[view][0];
   document.getElementById('pageSubtitle').textContent = titles[view][1];
   document.getElementById('sidebar').classList.remove('open');
@@ -350,7 +350,7 @@ async function openTask(taskId) {
   } catch (error) { toast(error.message, true); }
 }
 
-document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', () => showView(item.dataset.view)));
+document.querySelectorAll('.nav-item[data-view]').forEach(item => item.addEventListener('click', () => showView(item.dataset.view)));
 document.querySelectorAll('[data-go]').forEach(item => item.addEventListener('click', () => showView(item.dataset.go)));
 document.querySelectorAll('.segment-button').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.segment-button').forEach(item => item.classList.toggle('active', item === button));
