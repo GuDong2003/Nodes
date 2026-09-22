@@ -74,6 +74,7 @@ SETTINGS_KEYS = (
     "captcha_poll_interval",
     "turnstile_extension_path",
     "proxy_enabled",
+    "proxy_use_pool",
     "http_proxy",
     "https_proxy",
     "no_proxy",
@@ -97,6 +98,7 @@ def _public_settings(config):
         "captcha_poll_interval": int(float(config.get("captcha_poll_interval") or 5)),
         "turnstile_extension_path": str(config.get("turnstile_extension_path") or ""),
         "proxy_enabled": _as_bool(config.get("proxy_enabled")),
+        "proxy_use_pool": _as_bool(config.get("proxy_use_pool")),
         "http_proxy": str(config.get("http_proxy") or ""),
         "https_proxy": str(config.get("https_proxy") or ""),
         "no_proxy": str(config.get("no_proxy") or "localhost,127.0.0.1"),
@@ -153,13 +155,14 @@ def _apply_settings(payload):
     next_config["captcha_poll_interval"] = poll
     next_config["turnstile_extension_path"] = str(merged["turnstile_extension_path"] or "").strip()
     next_config["proxy_enabled"] = _as_bool(merged["proxy_enabled"])
+    next_config["proxy_use_pool"] = _as_bool(merged["proxy_use_pool"])
     next_config["http_proxy"] = str(merged["http_proxy"] or "").strip()
     next_config["https_proxy"] = str(merged["https_proxy"] or "").strip()
     next_config["no_proxy"] = str(merged["no_proxy"] or "localhost,127.0.0.1").strip() or "localhost,127.0.0.1"
 
-    if next_config["http_proxy"]:
+    if not next_config["proxy_use_pool"] and next_config["http_proxy"]:
         _clean_url(next_config["http_proxy"], "HTTP 代理")
-    if next_config["https_proxy"]:
+    if not next_config["proxy_use_pool"] and next_config["https_proxy"]:
         _clean_url(next_config["https_proxy"], "HTTPS 代理")
     if mail_provider in {"yunxin", "cfmail"} and not next_config["mail_api_base"]:
         raise ValueError("该邮箱提供方需要填写 API 地址")
@@ -167,6 +170,13 @@ def _apply_settings(payload):
         raise ValueError("cfmail 需要填写邮箱域名")
     if captcha_provider == "2captcha" and not next_config["captcha_api_key"]:
         raise ValueError("2Captcha 需要填写 API Key")
+
+    if next_config["proxy_use_pool"]:
+        pool.registration_proxy_url(next_config)  # Validate before persisting; don't expose the URL.
+        if not _as_bool(current.get("proxy_use_pool")):
+            entries = pool.live_entries(_account_records(), NODE_DIR, pool.pool_settings(next_config), time.time())
+            if not entries:
+                raise RuntimeError("暂无可导出的节点，请先生成或导入有效代理账号")
 
     _atomic_json(CONFIG_FILE, next_config)
     if hasattr(worker, "reload_settings"):
@@ -1224,7 +1234,7 @@ def dashboard():
         "chain": {
             "captcha": str(config.get("captcha_provider") or worker.CAPTCHA_PROVIDER),
             "mail": str(config.get("mail_provider") or worker.MAIL_PROVIDER),
-            "proxy": "enabled" if _as_bool(config.get("proxy_enabled")) else ("configured" if files else "waiting"),
+            "proxy": "enabled" if (_as_bool(config.get("proxy_enabled")) or _as_bool(config.get("proxy_use_pool"))) else ("configured" if files else "waiting"),
             "output": "enabled",
         },
         "active_task": active.get("id") if active else None,

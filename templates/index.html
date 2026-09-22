@@ -182,7 +182,9 @@
           <section class="panel">
             <div class="panel-heading"><div><h2>注册出口代理</h2><p>请求 ProxyScrape / 邮箱 / 打码时使用的 HTTP 代理</p></div></div>
             <form id="proxySettingsForm" class="settings-form">
-              <label class="check-row"><input id="proxy_enabled" type="checkbox"><span>启用出口代理</span></label>
+              <label class="check-row"><input id="proxy_use_pool" type="checkbox"><span>使用已生成节点（自动复用 Resin 池）</span></label>
+              <p class="settings-hint">开启并保存后自动使用池内节点，无需输入地址或密码；本机和内部服务直连。仅影响 HTTP API 请求，浏览器行为不变。关闭后恢复下方手动配置。</p>
+              <label class="check-row"><input id="proxy_enabled" type="checkbox"><span>启用手动出口代理</span></label>
               <label><span>HTTP 代理</span><input id="http_proxy" placeholder="http://user:pass@host:port"></label>
               <label><span>HTTPS 代理</span><input id="https_proxy" placeholder="留空则复用 HTTP 代理"></label>
               <label><span>不走代理</span><input id="no_proxy" placeholder="localhost,127.0.0.1"></label>
@@ -285,6 +287,6 @@
   </dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="sidebar-scrim" id="sidebarScrim"></div>
-  <script src="{{ url_for('static', filename='app.js') }}?v=pool-full1" defer></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=proxy-pool1" defer></script>
 </body>
 </html>

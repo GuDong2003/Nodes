@@ -558,6 +558,14 @@ function fillSettings(settings) {
     if (element.type === 'checkbox') element.checked = Boolean(value);
     else element.value = value ?? '';
   });
+  updateProxyMode();
+}
+
+function updateProxyMode() {
+  const usePool = document.getElementById('proxy_use_pool').checked;
+  ['proxy_enabled', 'http_proxy', 'https_proxy', 'no_proxy'].forEach(id => {
+    document.getElementById(id).disabled = usePool;
+  });
 }
 
 async function loadSettings() {
@@ -600,8 +608,9 @@ async function saveSettings(event, keys, successText) {
 document.getElementById('mailSettingsForm').addEventListener('submit', event => saveSettings(event, settingFields.mail, '邮箱设置已同步'));
 document.getElementById('captchaSettingsForm').addEventListener('submit', event => saveSettings(event, settingFields.captcha, '打码设置已同步'));
 document.getElementById('proxySettingsForm').addEventListener('submit', event => {
-  saveSettings(event, [...settingFields.proxy, 'proxy_enabled'], '代理设置已同步');
+  saveSettings(event, [...settingFields.proxy, 'proxy_enabled', 'proxy_use_pool'], '代理设置已同步');
 });
+document.getElementById('proxy_use_pool').addEventListener('change', updateProxyMode);
 document.getElementById('ensureCapacityButton').addEventListener('click', async () => {
   const button = document.getElementById('ensureCapacityButton');
   button.disabled = true;

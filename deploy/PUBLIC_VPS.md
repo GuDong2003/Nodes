@@ -38,6 +38,9 @@ API 保留 `live_slots`、`concurrent_slots` 等旧字段名作为节点数量�
 
 自动补号被两层关闭：`pool_auto_register=false` 与 `NODES_DISABLE_POOL_LOOP=1`。
 手动注册也应先确认上游授权及第三方费用。不要未确认就开启后台循环。
+「代理输出」提供 `proxy_use_pool` 开关：勾选并保存后，HTTP API 请求自动经过内网
+`http://resin:8970`，凭据从现有服务端配置读取；关闭时恢复原手动代理设置。
+管理/订阅等内网请求自动绕过代理，Chromium 不随开关变更。部署不自动启用此开关。
 代理池为空时不要将空的 Clash 配置用作隐私保护工具（上游空配置允许 DIRECT）。
 上游 GPT/Ladder 导出在空池时会返回 503，并误写为 `resin_proxy_token_missing`；
 这不一定是令牌问题。此部署已经单独验证代理令牌有效，需先加入可用节点再使用这些订阅。
@@ -77,7 +80,7 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 本地测试：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 NODES_DISABLE_POOL_LOOP=1 NODES_CONFIG_FILE=/tmp/nodes-unconfigured.json uv run --isolated --no-project --python 3.12 --with requests --with 'Flask>=3.1,<4' python -m unittest -q test_turnstile_solver test_web_app tests.test_mail_provider test_public_deployment test_deploy_resin
+PYTHONDONTWRITEBYTECODE=1 NODES_DISABLE_POOL_LOOP=1 NODES_CONFIG_FILE=/tmp/nodes-unconfigured.json uv run --isolated --no-project --python 3.12 --with requests --with 'Flask>=3.1,<4' python -m unittest -q test_turnstile_solver test_web_app tests.test_mail_provider test_public_deployment test_deploy_resin test_proxy_reuse
 ```
 
 线上 smoke test 使用现有登录凭据，验证 TLS、登录、Cookie、CSRF、无变化配置保存、

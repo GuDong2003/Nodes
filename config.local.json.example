@@ -19,6 +19,7 @@
   "resin_gateway_host": "127.0.0.1",
   "resin_gateway_port": 8970,
   "resin_gateway_platform": "Nodes",
+  "proxy_use_pool": false,
   "pool_expected_proxies_per_account": 100,
   "pool_auto_register": true
 }

@@ -27,6 +27,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from email import policy
 from email.errors import MessageError
 from email.parser import Parser
+from urllib.parse import urlsplit
+
+import pool
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _LOCAL_CONFIG_FILE = os.environ.get("NODES_CONFIG_FILE") or os.path.join(_BASE, "config.local.json")
@@ -178,16 +181,27 @@ _NODE_DIR = os.path.join(_BASE, "node")
 
 def _apply_proxy_env():
     enabled = str(_LOCAL_CONFIG.get("proxy_enabled") or "").strip().lower() in {"1", "true", "yes", "on"}
+    use_pool = str(_LOCAL_CONFIG.get("proxy_use_pool") or "").strip().lower() in {"1", "true", "yes", "on"}
     http_proxy = str(_LOCAL_CONFIG.get("http_proxy") or "").strip()
     https_proxy = str(_LOCAL_CONFIG.get("https_proxy") or "").strip() or http_proxy
     no_proxy = str(_LOCAL_CONFIG.get("no_proxy") or "localhost,127.0.0.1").strip()
+    if use_pool:
+        http_proxy = https_proxy = pool.registration_proxy_url(_LOCAL_CONFIG)
+        enabled = True
+        bypass = [item.strip() for item in no_proxy.split(",") if item.strip()]
+        internal_base = str(_LOCAL_CONFIG.get("internal_base_url") or "")
+        for host in ("localhost", "127.0.0.1", "::1", "dashboard", "resin",
+                     urlsplit(http_proxy).hostname, urlsplit(internal_base).hostname):
+            if host and host not in bypass:
+                bypass.append(host)
+        no_proxy = ",".join(bypass)
     if enabled and (http_proxy or https_proxy):
-        if http_proxy:
-            os.environ["HTTP_PROXY"] = http_proxy
-            os.environ["http_proxy"] = http_proxy
-        if https_proxy:
-            os.environ["HTTPS_PROXY"] = https_proxy
-            os.environ["https_proxy"] = https_proxy
+        for key, value in (("HTTP_PROXY", http_proxy), ("http_proxy", http_proxy),
+                           ("HTTPS_PROXY", https_proxy), ("https_proxy", https_proxy)):
+            if value:
+                os.environ[key] = value
+            else:
+                os.environ.pop(key, None)
         os.environ["NO_PROXY"] = no_proxy
         os.environ["no_proxy"] = no_proxy
         return

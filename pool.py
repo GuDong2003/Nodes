@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 import base64
-from urllib.parse import quote, quote_plus
+from urllib.parse import quote, quote_plus, urlsplit
 
 
 DEFAULT_TARGET_SLOTS = 80
@@ -315,3 +315,28 @@ def resin_auth(config=None):
         or "V1"
     )
     return token, auth_version
+
+
+def registration_proxy_url(config):
+    """Resolve a server-only Resin proxy URL; never write it into manual settings."""
+    token, auth_version = resin_auth(config)
+    if not token:
+        raise RuntimeError("未配置 Resin 代理认证，无法使用已生成节点")
+    raw = (os.environ.get("NODES_RESIN_PROXY_URL") or config.get("resin_internal_proxy_url")
+           or "http://127.0.0.1:8970")
+    try:
+        endpoint = urlsplit(str(raw).strip())
+        valid = (endpoint.scheme in {"http", "https"} and endpoint.hostname and endpoint.port
+                 and endpoint.username is None and endpoint.password is None
+                 and endpoint.path in {"", "/"} and not endpoint.query and not endpoint.fragment)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise RuntimeError("Resin 内网代理地址无效，请检查服务端配置")
+    platform = pool_settings(config)["gateway_platform"]
+    # Keep one stable identity for Nodes, separate from exported n01/n02 identities.
+    if auth_version.upper() in {"V1", "V1.0"}:
+        user, password = f"{platform}.nodes-ops", token
+    else:
+        user, password = token, f"{platform}:nodes-ops"
+    return f"{endpoint.scheme}://{quote(user, safe='')}:{quote(password, safe='')}@{endpoint.netloc}"

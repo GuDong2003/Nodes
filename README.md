@@ -124,6 +124,19 @@ Resin 的 live-proxies 订阅导出每个有效账号的全部去重代理地址
 旧 `pool_slots_per_account` 设置已停用。`pool_expected_proxies_per_account` 默认 100，
 仅用于估算补号数；`pool_target_slots` 是补池目标，不是订阅条数上限。
 
+### 复用已生成节点作为出口
+
+在「代理输出 → 注册出口代理」勾选「使用已生成节点」，点击保存即可通过现有 Resin 池
+发送 HTTP API 请求，无需手动填代理地址或令牌。`proxy_use_pool` 默认关闭；开启后优先于
+手动代理，关闭后恢复原有 `proxy_enabled/http_proxy/https_proxy` 配置，不覆盖手动输入。
+此开关不改变 Chromium 的代理设置。
+
+Docker 部署通过 `NODES_RESIN_PROXY_URL=http://resin:8970` 指定内部网关；其他部署可在
+服务端配置 `resin_internal_proxy_url`，默认 `http://127.0.0.1:8970`。地址不应含用户名、密码、
+路径或查询参数；认证复用服务端已有 Resin 代理令牌，使用独立的 `Nodes.nodes-ops` 身份。
+本机、`dashboard`、`resin` 和配置中的内部服务主机自动加入直连列表。
+没有可导出节点或缺少认证时不能启用；运行中池不可用会报错，不会自动降级直连。
+
 `config.local.json` 已被 `.gitignore` 排除，不会进入仓库。
 
 **方式二：环境变量（会覆盖配置文件同名项）**

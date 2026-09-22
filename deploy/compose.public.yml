@@ -16,6 +16,7 @@ services:
     environment:
       NODES_CONFIG_FILE: /app/config/config.local.json
       NODES_DISABLE_POOL_LOOP: "1"
+      NODES_RESIN_PROXY_URL: http://resin:8970
       TZ: Asia/Shanghai
     ports:
       - "127.0.0.1:8891:8080"
