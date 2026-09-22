@@ -24,6 +24,9 @@ import threading
 import html as _html
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from email import policy
+from email.errors import MessageError
+from email.parser import Parser
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _LOCAL_CONFIG_FILE = os.environ.get("NODES_CONFIG_FILE") or os.path.join(_BASE, "config.local.json")
@@ -437,6 +440,39 @@ def _cfmail_payload(data):
     return data
 
 
+def _code_from_cfmail(mail):
+    """CF returns RFC 5322 source in raw; decode bodies before extracting a code."""
+    if not isinstance(mail, dict):
+        return ""
+    code = _code_from_yunxin_mail(mail)
+    if code:
+        return code
+    raw = mail.get("raw")
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    try:
+        message = Parser(policy=policy.default).parsestr(raw)
+    except (MessageError, ValueError):
+        return ""
+    # get_body skips attachments (including attached messages). Never scan headers.
+    for kind in ("html", "plain"):
+        part = message.get_body(preferencelist=(kind,))
+        if part is None:
+            continue
+        try:
+            try:
+                body = part.get_content()
+            except LookupError:
+                # A bad charset label must not discard an otherwise readable code.
+                body = (part.get_payload(decode=True) or b"").decode("utf-8", errors="replace")
+        except (MessageError, ValueError):
+            continue
+        code = _code_from_yunxin_mail({"html" if kind == "html" else "text": body})
+        if code:
+            return code
+    return ""
+
+
 def cfmail_create_mailbox():
     """Create a mailbox through the Cloudflare Temp Email API."""
     def _do():
@@ -498,9 +534,9 @@ def cfmail_wait_code(address, address_token, timeout=180, interval=5):
         if not isinstance(mails, list):
             mails = data.get("mails") or data.get("emails") or []
         for mail in mails:
-            code = _code_from_yunxin_mail(mail)
+            code = _code_from_cfmail(mail)
             if code:
-                log(f"收到验证码: {code}  (主题: {mail.get('subject')})")
+                log("收到 Cloudflare 邮箱验证码")
                 return code
         time.sleep(interval)
     raise TimeoutError("等 Cloudflare 临时邮箱验证码超时")

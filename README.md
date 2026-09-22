@@ -112,6 +112,10 @@ Admin 密码或令牌写进 Nodes。创建邮箱使用公开的 `/api/new_addres
 `mail_domain` 应填写 Temp Email 的可用域名；`mail_suffix` 和 `mail_type` 对 `cfmail`
 不生效。若该服务启用了自己的 Turnstile 校验，需要先在服务端关闭或另行扩展 token 配置。
 
+收件接口返回 `raw` 原始邮件时，Nodes 会先解码 MIME（含 quoted-printable、Base64
+和邮件声明的字符集），再从 HTML/纯文本正文提取验证码，不扫描附件，也不把验证码写入日志。
+创建空邮箱并读取空收件箱只能验证接口连通；不能代替带验证码邮件的解析测试。
+
 `config.local.json` 已被 `.gitignore` 排除，不会进入仓库。
 
 **方式二：环境变量（会覆盖配置文件同名项）**
