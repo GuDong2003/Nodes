@@ -45,7 +45,8 @@ python -m pip install -r requirements.txt
 
 ## 本地隐私配置
 
-项目不会在源码中保存邮箱 API Key、自有域名或本机绝对路径。支持自建云芯邮箱 API 和原有 YYDS Mail。
+项目不会在源码中保存邮箱 API Key、自有域名或本机绝对路径。支持 Cloudflare Temp Email、
+自建云芯邮箱 API 和原有 YYDS Mail。
 
 **方式一：配置文件（推荐，最省事）**
 
@@ -78,8 +79,8 @@ cp config.local.json.example config.local.json
 
 | 字段 | 必需 | 说明 |
 |------|------|------|
-| `mail_provider` | 是 | `yunxin` 使用自建 HTTPS API；`yyds` 使用原接口 |
-| `mail_api_base` | yunxin 必需 | 云芯邮箱服务地址 |
+| `mail_provider` | 是 | `cfmail` 使用 Cloudflare Temp Email；`yunxin` 使用自建 HTTPS API；`yyds` 使用原接口 |
+| `mail_api_base` | cfmail/yunxin 必需 | 邮箱服务地址 |
 | `mail_api_key` | yunxin 必需 | `qm_` 开头的 API 密钥 |
 | `mail_type` | 否 | `mail`、`cf` 或 `auto`；默认 `mail` |
 | `mail_suffix` | 否 | `mail` 类型的后缀，例如 `mail.com` |
@@ -93,19 +94,37 @@ cp config.local.json.example config.local.json
 | `captcha_poll_interval` | 否 | 查询结果间隔秒数，最小 5 秒 |
 | `turnstile_extension_path` | 否 | 留空即用仓库自带的 `turnstilePatch/`；仅当想换成本机其它目录时才填 |
 
+### Cloudflare Temp Email
+
+兼容 Cloudflare Worker 版 Temp Email（例如 `/admin` 管理页面对应的服务），不需要把
+Admin 密码或令牌写进 Nodes。创建邮箱使用公开的 `/api/new_address`，收信使用创建时返回的
+邮箱 JWT：
+
+```json
+{
+  "mail_provider": "cfmail",
+  "mail_api_base": "https://temp.example.com",
+  "mail_domain": "example.com",
+  "mail_api_key": ""
+}
+```
+
+`mail_domain` 应填写 Temp Email 的可用域名；`mail_suffix` 和 `mail_type` 对 `cfmail`
+不生效。若该服务启用了自己的 Turnstile 校验，需要先在服务端关闭或另行扩展 token 配置。
+
 `config.local.json` 已被 `.gitignore` 排除，不会进入仓库。
 
 **方式二：环境变量（会覆盖配置文件同名项）**
 
 | 环境变量 | 必需 | 说明 |
 |----------|------|------|
-| `MAIL_PROVIDER` | 否 | `yunxin` 或 `yyds` |
-| `MAIL_API_BASE` | yunxin 必需 | 云芯邮箱服务地址 |
+| `MAIL_PROVIDER` | 否 | `cfmail`、`yunxin` 或 `yyds` |
+| `MAIL_API_BASE` | cfmail/yunxin 必需 | 邮箱服务地址 |
 | `MAIL_API_KEY` | yunxin 必需 | `qm_` 开头的 API 密钥 |
 | `MAIL_TYPE` | 否 | `mail`、`cf` 或 `auto` |
 | `MAIL_SUFFIX` | 否 | mail.com 母号别名后缀 |
 | `MAIL_DOMAIN` | 否 | CF 自有域名 |
-| `YYDS_API_KEY` | 是 | YYDS Mail API Key |
+| `YYDS_API_KEY` | yyds 必需 | YYDS Mail API Key |
 | `YYDS_DOMAIN` | 否 | 已验证的自有域名；留空则由 YYDS 选择 |
 | `CAPTCHA_PROVIDER` | 否 | `2captcha` 或 `browser` |
 | `CAPTCHA_API_KEY` | 2captcha 必需 | 2Captcha API Key |

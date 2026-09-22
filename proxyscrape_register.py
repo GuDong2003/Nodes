@@ -418,17 +418,107 @@ def yunxin_wait_code(address, timeout=180, interval=5):
     raise TimeoutError("等验证码超时")
 
 
+def _cfmail_headers(address_token=""):
+    token = str(address_token or "").strip()
+    if not token:
+        raise RuntimeError("Cloudflare 临时邮箱未返回地址 JWT")
+    return {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}",
+        "X-User-Token": token,
+    }
+
+
+def _cfmail_payload(data):
+    if not isinstance(data, dict):
+        return {}
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        return {**data, **nested}
+    return data
+
+
+def cfmail_create_mailbox():
+    """Create a mailbox through the Cloudflare Temp Email API."""
+    def _do():
+        local = random_mailbox_local()
+        domain = str(MAIL_DOMAIN or "").strip()
+        if not domain:
+            raise RuntimeError("cfmail 需要配置 MAIL_DOMAIN")
+        payload = {
+            "name": local,
+            "domain": domain,
+            "cf_token": "",
+            "enableRandomSubdomain": False,
+            "enablePrefix": False,
+        }
+        response = requests.post(
+            f"{MAIL_API_BASE}/api/new_address",
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = _cfmail_payload(response.json())
+        token = str(data.get("jwt") or data.get("token") or "").strip()
+        if not token:
+            raise RuntimeError("Cloudflare 临时邮箱响应缺少 address JWT")
+        address = str(data.get("address") or data.get("email") or "").strip()
+        if not address:
+            settings = requests.get(
+                f"{MAIL_API_BASE}/api/settings",
+                headers=_cfmail_headers(token),
+                timeout=20,
+            )
+            settings.raise_for_status()
+            address = str(_cfmail_payload(settings.json()).get("address") or "").strip()
+        if not address:
+            raise RuntimeError("Cloudflare 临时邮箱响应缺少 address")
+        return address, token
+
+    address, token = _retry(_do, tries=3, what="建 Cloudflare 临时邮箱")
+    log(f"临时邮箱: {address}")
+    return address, token
+
+
+def cfmail_wait_code(address, address_token, timeout=180, interval=5):
+    """Poll a Cloudflare Temp Email mailbox with its per-address JWT."""
+    del address  # The JWT scopes the mailbox; the API lists that mailbox directly.
+    deadline = time.time() + timeout
+    headers = _cfmail_headers(address_token)
+    while time.time() < deadline:
+        response = requests.get(
+            f"{MAIL_API_BASE}/api/mails",
+            headers=headers,
+            params={"limit": 20, "offset": 0},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = _cfmail_payload(response.json())
+        for mail in data.get("results") or []:
+            code = _code_from_yunxin_mail(mail)
+            if code:
+                log(f"收到验证码: {code}  (主题: {mail.get('subject')})")
+                return code
+        time.sleep(interval)
+    raise TimeoutError("等 Cloudflare 临时邮箱验证码超时")
+
+
 def create_mailbox():
     if MAIL_PROVIDER == "yyds":
         return yyds_create_mailbox()
+    if MAIL_PROVIDER == "cfmail":
+        return cfmail_create_mailbox()
     if MAIL_PROVIDER in {"yunxin", "qingyi", "custom"}:
         return yunxin_create_mailbox()
     raise RuntimeError(f"不支持的邮箱服务: {MAIL_PROVIDER}")
 
 
-def wait_mail_code(address, timeout=180, interval=5):
+def wait_mail_code(address, timeout=180, interval=5, address_token=None):
     if MAIL_PROVIDER == "yyds":
         return yyds_wait_code(address, timeout=timeout, interval=interval)
+    if MAIL_PROVIDER == "cfmail":
+        return cfmail_wait_code(address, address_token, timeout=timeout, interval=interval)
     if MAIL_PROVIDER in {"yunxin", "qingyi", "custom"}:
         return yunxin_wait_code(address, timeout=timeout, interval=interval)
     raise RuntimeError(f"不支持的邮箱服务: {MAIL_PROVIDER}")
@@ -1030,14 +1120,14 @@ def _register_once(headless, node_file):
     """单次尝试：建邮箱→打码→注册→验证→拉代理。返回 rec（不落盘账号）。
     建邮箱/打码/注册任一失败抛异常，交给外层重试。"""
     password = "Ps" + "".join(random.choices(string.ascii_letters + string.digits, k=10)) + "!9"
-    email, _ = create_mailbox()                    # 失败抛异常 → 外层重试
+    email, mailbox_token = create_mailbox()        # 失败抛异常 → 外层重试
     token = solve_turnstile(headless=headless)     # 失败抛异常 → 外层重试
     session, access_token, userdata = register(email, password, token)  # 同上
 
     verified = False
     try:
         resend_code(session, access_token)
-        code = wait_mail_code(email, timeout=180)
+        code = wait_mail_code(email, timeout=180, address_token=mailbox_token)
         verified = verify_email(session, access_token, code)
     except Exception as e:
         log(f"[!] 邮箱验证环节: {e}（账号已注册，token 有效）")

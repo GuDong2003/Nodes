@@ -125,6 +125,38 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         start.assert_called_once_with(2, 2)
 
+    def test_cfmail_settings_are_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_file = Path(directory) / "config.local.json"
+            config_file.write_text("{}", encoding="utf-8")
+            with patch.object(target, "CONFIG_FILE", config_file), \
+                 patch.object(target.TASK_STORE, "active", return_value=None), \
+                 patch.object(target.worker, "reload_settings"):
+                settings = target._apply_settings({
+                    "mail_provider": "cfmail",
+                    "mail_api_base": "https://temp.gudong226.com",
+                    "mail_domain": "gudong226.com",
+                    "captcha_provider": "browser",
+                })
+
+            self.assertEqual(settings["mail_provider"], "cfmail")
+            self.assertEqual(settings["mail_api_base"], "https://temp.gudong226.com")
+            self.assertEqual(settings["mail_domain"], "gudong226.com")
+
+    def test_cfmail_settings_require_a_domain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_file = Path(directory) / "config.local.json"
+            config_file.write_text("{}", encoding="utf-8")
+            with patch.object(target, "CONFIG_FILE", config_file), \
+                 patch.object(target.TASK_STORE, "active", return_value=None), \
+                 patch.object(target.worker, "reload_settings"):
+                with self.assertRaisesRegex(ValueError, "cfmail 需要填写邮箱域名"):
+                    target._apply_settings({
+                        "mail_provider": "cfmail",
+                        "mail_api_base": "https://temp.gudong226.com",
+                        "captcha_provider": "browser",
+                    })
+
 
 class TaskStoreTests(unittest.TestCase):
     @patch.object(target.worker, "register_one")

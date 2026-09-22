@@ -27,3 +27,9 @@ screenshots/
 .playwright-mcp/
 .wrangler/
 _diag_widget.py
+
+# Public VPS runtime data, certificates and local handoff credentials
+/data/
+/web-data/
+/certs/
+/deploy/private/

@@ -125,21 +125,22 @@
 
         <section class="view" id="view-mail">
           <section class="panel page-panel">
-            <div class="panel-heading"><div><h2>邮箱接口</h2><p>云芯 / YYDS 收信配置，保存后立即同步到注册进程</p></div></div>
+            <div class="panel-heading"><div><h2>邮箱接口</h2><p>Cloudflare Temp Email / 云芯 / YYDS 收信配置，保存后立即同步到注册进程</p></div></div>
             <form id="mailSettingsForm" class="settings-form">
               <div class="form-grid">
                 <label><span>邮箱提供方</span>
                   <select id="mail_provider">
                     <option value="yunxin">云芯 Yunxin</option>
                     <option value="yyds">YYDS Mail</option>
+                    <option value="cfmail">Cloudflare Temp Email</option>
                   </select>
                 </label>
                 <label><span>邮箱类型</span><input id="mail_type" placeholder="mail"></label>
                 <label><span>邮箱后缀</span><input id="mail_suffix" placeholder="mail.com"></label>
                 <label><span>指定域名</span><input id="mail_domain" placeholder="可空"></label>
               </div>
-              <label><span>云芯 API 地址</span><input id="mail_api_base" placeholder="https://mail.example.com"></label>
-              <label><span>云芯 API Key</span><input id="mail_api_key" placeholder="mail_api_key"></label>
+              <label><span>邮箱 API 地址</span><input id="mail_api_base" placeholder="https://temp.example.com"></label>
+              <label><span>云芯 API Key</span><input id="mail_api_key" placeholder="cfmail 不需要，云芯必填"></label>
               <div class="form-grid">
                 <label><span>YYDS API Key</span><input id="yyds_api_key" placeholder="可空，提供方为 YYDS 时必填"></label>
                 <label><span>YYDS 域名</span><input id="yyds_domain" placeholder="可空"></label>
@@ -287,4 +288,3 @@
   <script src="{{ url_for('static', filename='app.js') }}?v=pool11" defer></script>
 </body>
 </html>
-

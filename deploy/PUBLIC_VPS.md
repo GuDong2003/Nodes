@@ -1,0 +1,98 @@
+# Nodes + Resin 公网部署
+
+部署于风尚云 Ubuntu 22.04，域名 `ps.gudong226.com`。源码基线为
+`2fa1ad8`，另包含当前工作区的公网部署修补。现有业务不属于本部署项目。
+
+## 入口与数据
+
+- `https://ps.gudong226.com/` 跳转到 Nodes `/nodes/`，用户名 `admin`。
+- `https://ps.gudong226.com/ui/` 为 Resin 控制台，使用独立管理员令牌登录。
+- HTTP/SOCKS5 代理入口为 `ps.gudong226.com:8970`，例如用户名 `Nodes.n01`，
+  密码为独立代理令牌。此端口禁止管理 API 和 URL 反向代理。
+- **8970 是普通 HTTP/SOCKS5，不是 TLS 代理入口**。HTTPS 目标的内容仍由
+  CONNECT 隧道里的 TLS 保护，但到代理的认证信息没有额外的传输加密。
+  不要在不可信网络上裸用；需要时通过 SSH/VPN 隧道访问。TLS 面板不能替代代理入口 TLS。
+- 后端管理端口 `8891`、`2260` 只绑定 VPS 的 `127.0.0.1`。
+- 项目目录 `/opt/nodes`；Nodes 运行数据在 `data/account`、`data/node`、`data/web`；
+  Resin 数据在 `data/resin/{state,cache,log}`。
+- `data/config/config.local.json` 是 Nodes 配置，整个目录挂载以支持原子保存。
+- `data/config/resin.env` 是 Resin 的独立管理员/代理令牌。
+- `data/config/access.json` 是私密登录交接文件。三者均为 `0600`；不要分享、提交或输出到日志。
+- 本机交接副本位于 `deploy/private/access.json`，已被 Git 和 Docker 构建上下文排除。
+
+## 初始业务状态
+
+服务启动不等于上游节点已经可用。初始化不创建邮箱、不注册账号、不调用打码服务。
+尚需在 Nodes 配置邮箱服务、打码方式，或导入用户已有的合法代理账号数据。
+初始账户/代理池为空，不能据此宣称代理出口已验证。
+
+Resin 已创建 `Nodes` 平台及订阅，每 2 分钟从 Docker 内网
+`http://dashboard:8080/nodes/api/export/live-proxies` 拉取带令牌的订阅。
+只导入此平台的 `Nodes/` 节点，绝不能把 GPT/Clash 的 Resin 网关订阅反导回 Resin，
+否则会形成循环代理。
+
+自动补号被两层关闭：`pool_auto_register=false` 与 `NODES_DISABLE_POOL_LOOP=1`。
+手动注册也应先确认上游授权及第三方费用。不要未确认就开启后台循环。
+代理池为空时不要将空的 Clash 配置用作隐私保护工具（上游空配置允许 DIRECT）。
+上游 GPT/Ladder 导出在空池时会返回 503，并误写为 `resin_proxy_token_missing`；
+这不一定是令牌问题。此部署已经单独验证代理令牌有效，需先加入可用节点再使用这些订阅。
+
+## 运维命令
+
+在 VPS `/opt/nodes` 下执行：
+
+```bash
+docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml ps
+docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml logs --tail 80 dashboard
+docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml logs --tail 80 resin
+```
+
+不要把未脱敏的日志贴出；订阅 URL 自身也包含访问凭据。
+
+Resin 固定为 `1.2.0` 并锁定镜像摘要。Nodes 镜像为 `nodes:public-20260922`。
+更新源码后构建与重新部署仅影响本项目：
+
+```bash
+docker build -t nodes:public-20260922 .
+docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml up -d --no-build
+```
+
+初次初始化（幂等，拒绝覆盖不完整的已有配置）：
+
+```bash
+docker run --rm --network none --entrypoint python -v /opt/nodes:/deployment nodes:public-20260922 /deployment/deploy/initialize.py --root /deployment --domain ps.gudong226.com
+docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml exec -T dashboard python deploy/configure_resin.py
+```
+
+`configure_resin.py` 会协调名称为 Nodes 的平台/订阅及 8970 端点；不要在手动修改这些
+对象后无意执行它，因为它会恢复本部署策略。它不处理其他名称的订阅或平台。
+
+## 验证
+
+本地测试：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 NODES_DISABLE_POOL_LOOP=1 NODES_CONFIG_FILE=/tmp/nodes-unconfigured.json uv run --isolated --no-project --python 3.12 --with requests --with 'Flask>=3.1,<4' python -m unittest -q test_turnstile_solver test_web_app tests.test_mail_provider test_public_deployment test_deploy_resin
+```
+
+线上 smoke test 使用现有登录凭据，验证 TLS、登录、Cookie、CSRF、无变化配置保存、
+Resin 内网订阅和公网代理鉴权，不启动注册任务：
+
+```bash
+docker cp deploy/verify_public.py nodes-dashboard-1:/tmp/verify_public.py
+docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml exec -T dashboard python /tmp/verify_public.py
+```
+
+## Caddy 与回滚
+
+现有 Caddy 容器 `new-api-caddy` 使用 host 网络。仅在
+`/opt/new-api/Caddyfile` 末尾新增 `deploy/ps.Caddyfile` 中的站点。
+原文件备份为 `/opt/nodes/backups/Caddyfile.pre-nodes-20260922`。
+原有 `api`、`cpa`、`sub`、`t2i` 站点配置保留，配置通过验证后只 reload、不 restart。
+
+若未来回滚，先比较当前 Caddyfile 与备份，保留部署之后新增的其他业务配置，
+再仅移除 ps 站点并 validate/reload；不要盲目用旧备份覆盖后续变更。
+停用 Nodes/Resin 使用本项目的 `docker compose ... stop`，不要删除 data 目录或卷。
+
+变更前基线：`api` 根路径 200、`cpa` 根路径 200、`sub` 根路径 502、`t2i` 根路径 404。
+其中 sub 的既有 502 不在此次修复范围内。

@@ -1,0 +1,21 @@
+ps.gudong226.com {
+    encode zstd gzip
+
+    @nodes path /nodes /nodes/*
+    handle @nodes {
+        reverse_proxy 127.0.0.1:8891
+    }
+
+    @resin path /ui /ui/* /api/v1/* /healthz
+    handle @resin {
+        reverse_proxy 127.0.0.1:2260
+    }
+
+    handle / {
+        redir /nodes/ 302
+    }
+
+    handle {
+        respond "Not Found" 404
+    }
+}

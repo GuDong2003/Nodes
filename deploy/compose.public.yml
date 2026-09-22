@@ -1,0 +1,80 @@
+# Use: docker compose --project-directory . -p nodes -f deploy/compose.public.yml ...
+# TLS is supplied by the existing host Caddy, not a second public web server.
+name: nodes
+services:
+  dashboard:
+    image: nodes:public-20260922
+    build:
+      context: .
+    command:
+      - gunicorn
+      - --bind=0.0.0.0:8080
+      - --workers=1
+      - --threads=8
+      - --timeout=900
+      - wsgi:application
+    environment:
+      NODES_CONFIG_FILE: /app/config/config.local.json
+      NODES_DISABLE_POOL_LOOP: "1"
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:8891:8080"
+    volumes:
+      # Mount a directory so atomic rename can persist Web setting updates.
+      - ./data/config:/app/config
+      - ./data/account:/app/account
+      - ./data/node:/app/node
+      - ./data/web:/app/web-data
+    shm_size: 512m
+    mem_limit: 2g
+    cpus: 2.0
+    pids_limit: 512
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/nodes/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  resin:
+    image: ghcr.io/resinat/resin:1.2.0@sha256:9a8daa23a817de6daa7f9d5f04f4b197323f289f63e7fcf632f2598544426102
+    env_file: ./data/config/resin.env
+    environment:
+      RESIN_LISTEN_ADDRESS: 0.0.0.0
+      RESIN_PORT: "2260"
+      RESIN_PROBE_CONCURRENCY: "16"
+      RESIN_REQUEST_LOG_DB_MAX_MB: "64"
+      RESIN_REQUEST_LOG_DB_RETAIN_COUNT: "2"
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:2260:2260"
+      # Created via Resin API with management disabled and proxy auth required.
+      - "8970:8970"
+    volumes:
+      - ./data/resin/cache:/var/cache/resin
+      - ./data/resin/state:/var/lib/resin
+      - ./data/resin/log:/var/log/resin
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    restart: unless-stopped
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "wget -qO- http://127.0.0.1:2260/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

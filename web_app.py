@@ -125,8 +125,8 @@ def _apply_settings(payload):
     merged = _public_settings({**current, **incoming})
 
     mail_provider = str(merged["mail_provider"] or "yunxin").strip().lower()
-    if mail_provider not in {"yunxin", "yyds"}:
-        raise ValueError("邮箱提供方只能是 yunxin 或 yyds")
+    if mail_provider not in {"yunxin", "yyds", "cfmail"}:
+        raise ValueError("邮箱提供方只能是 yunxin、yyds 或 cfmail")
     captcha_provider = str(merged["captcha_provider"] or "2captcha").strip().lower()
     if captcha_provider not in {"2captcha", "browser"}:
         raise ValueError("打码方式只能是 2captcha 或 browser")
@@ -161,8 +161,10 @@ def _apply_settings(payload):
         _clean_url(next_config["http_proxy"], "HTTP 代理")
     if next_config["https_proxy"]:
         _clean_url(next_config["https_proxy"], "HTTPS 代理")
-    if mail_provider == "yunxin" and not next_config["mail_api_base"]:
-        raise ValueError("云芯邮箱需要填写 API 地址")
+    if mail_provider in {"yunxin", "cfmail"} and not next_config["mail_api_base"]:
+        raise ValueError("该邮箱提供方需要填写 API 地址")
+    if mail_provider == "cfmail" and not next_config["mail_domain"]:
+        raise ValueError("cfmail 需要填写邮箱域名")
     if captcha_provider == "2captcha" and not next_config["captcha_api_key"]:
         raise ValueError("2Captcha 需要填写 API Key")
 
@@ -470,10 +472,11 @@ def _public_base():
 def _subscription_urls():
     token = _export_token()
     public_base = _public_base()
-    internal = f"http://127.0.0.1:8891/nodes/api/export/live-proxies?token={token}"
+    internal_base = str(_read_config().get("internal_base_url") or "http://127.0.0.1:8891/nodes").rstrip("/")
+    internal = f"{internal_base}/api/export/live-proxies?token={token}"
     public = f"{public_base}/api/export/live-proxies?token={token}"
     gpt_public = f"{public_base}/api/export/gpt-gateway?token={token}"
-    gpt_internal = f"http://127.0.0.1:8891/nodes/api/export/gpt-gateway?token={token}"
+    gpt_internal = f"{internal_base}/api/export/gpt-gateway?token={token}"
     clash_public = f"{public_base}/api/export/clash.yml?token={token}"
     ladder_public = f"{public_base}/api/export/ladder?token={token}"
     return {
@@ -540,8 +543,6 @@ def _start_pool_loop():
 def protect_routes():
     _start_pool_loop()
     if request.endpoint in {"login", "health", "static", "live_proxies", "gpt_gateway", "clash_export", "ladder_export"}:
-        return None
-    if "/api/export/clash" in str(request.path or ""):
         return None
     if request.endpoint == "ensure_capacity" and _request_has_export_token():
         return None
