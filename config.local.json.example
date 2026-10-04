@@ -21,5 +21,13 @@
   "resin_gateway_platform": "Nodes",
   "proxy_use_pool": false,
   "pool_expected_proxies_per_account": 100,
-  "pool_auto_register": true
+  "pool_auto_register": true,
+  "proxy_quality_enabled": false,
+  "proxy_max_latency_ms": 3000,
+  "proxy_exclude_countries": "",
+  "proxy_arp_check_enabled": false,
+  "proxy_arp_probe_url": "https://cp.cloudflare.com/generate_204",
+  "proxy_quality_workers": 8,
+  "proxy_quality_cache_ttl_sec": 600,
+  "proxy_quality_timeout_sec": 12
 }

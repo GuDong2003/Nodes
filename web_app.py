@@ -7,9 +7,10 @@ import os
 import secrets
 import threading
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -29,7 +30,10 @@ from werkzeug.security import check_password_hash
 import requests
 
 import pool
+import platform_store
 import proxyscrape_register as worker
+import proxy_quality
+import quality_rules
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -38,6 +42,9 @@ NODE_DIR = Path(os.environ.get("NODES_NODE_DIR", BASE_DIR / "node"))
 WEB_DATA_DIR = Path(os.environ.get("NODES_WEB_DATA_DIR", BASE_DIR / "web-data"))
 CONFIG_FILE = Path(os.environ.get("NODES_CONFIG_FILE", BASE_DIR / "config.local.json"))
 TASKS_FILE = WEB_DATA_DIR / "tasks.json"
+_CONFIG_LOCK = threading.RLock()
+_QUALITY_CHECK_LOCK = threading.Lock()
+_QUALITY_CHECK = {"running": False, "completed": 0, "total": 0, "error": None}
 
 ACCOUNT_DIR.mkdir(parents=True, exist_ok=True)
 NODE_DIR.mkdir(parents=True, exist_ok=True)
@@ -51,6 +58,14 @@ def _read_config():
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def _config_write(function):
+    @wraps(function)
+    def serialized(*args, **kwargs):
+        with _CONFIG_LOCK:
+            return function(*args, **kwargs)
+    return serialized
 
 
 def _as_bool(value):
@@ -137,6 +152,7 @@ def _clean_proxy_url(value, field):
     return text
 
 
+@_config_write
 def _apply_settings(payload):
     if TASK_STORE.active():
         raise RuntimeError("有注册任务正在运行，请结束后再改配置")
@@ -440,6 +456,7 @@ def _record_failed_login(address):
         _login_attempts[address].append(time.monotonic())
 
 
+@_config_write
 def _export_token():
     token = str(os.environ.get("NODES_EXPORT_TOKEN") or "").strip()
     if token:
@@ -605,7 +622,7 @@ def _start_pool_loop():
 @app.before_request
 def protect_routes():
     _start_pool_loop()
-    if request.endpoint in {"login", "health", "static", "live_proxies", "gpt_gateway", "clash_export", "ladder_export", "socks5_export"}:
+    if request.endpoint in {"login", "health", "static", "live_proxies", "gpt_gateway", "clash_export", "ladder_export", "socks5_export", "qualified_proxies"}:
         return None
     if request.endpoint == "ensure_capacity" and _request_has_export_token():
         return None
@@ -768,6 +785,204 @@ def socks5_export():
 @app.get("/api/pool")
 def pool_status():
     return jsonify({"pool": _pool_public()})
+
+
+def _quality_inventory(profile, data_dir=None, urls=None):
+    if urls is None:
+        urls = _live_proxy_body().splitlines()
+    _accepted, report = proxy_quality.filter_proxies(
+        urls, settings=profile, data_dir=data_dir or WEB_DATA_DIR, probe_missing=False,
+    )
+    return {**report, "profile_id": profile["id"], "version": profile["version"],
+            "reasons": dict(Counter(row.get("reason") or "unknown" for row in report["results"]
+                                    if row.get("ok") is False))}
+
+
+def _quality_check_status():
+    with _QUALITY_CHECK_LOCK:
+        return dict(_QUALITY_CHECK)
+
+
+def _quality_payload():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("请求内容必须是 JSON 对象")
+    return payload
+
+
+@app.get("/api/quality/profiles")
+def quality_profiles_list():
+    return jsonify({"ok": True, **quality_rules.profiles_state(_read_config())})
+
+
+@app.put("/api/quality/profiles/<profile_id>")
+def quality_profiles_upsert(profile_id):
+    try:
+        payload = _quality_payload()
+        with _CONFIG_LOCK:
+            updated, row = quality_rules.save_profile(_read_config(), profile_id, payload)
+            _atomic_json(CONFIG_FILE, updated)
+            platform_store.append_audit(WEB_DATA_DIR, "quality", "save_profile",
+                                        {"profile_id": row["id"], "version": row["version"]})
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    return jsonify({"ok": True, "profile": row, **quality_rules.profiles_state(updated)})
+
+
+@app.post("/api/quality/profiles/activate")
+def quality_profiles_activate():
+    try:
+        payload = _quality_payload()
+        pid = quality_rules.profile_id(payload.get("id"))
+        with _CONFIG_LOCK:
+            updated, row = quality_rules.activate_profile(_read_config(), pid)
+            _atomic_json(CONFIG_FILE, updated)
+            platform_store.append_audit(WEB_DATA_DIR, "quality", "activate_profile",
+                                        {"profile_id": row["id"], "version": row["version"]})
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    return jsonify({"ok": True, **quality_rules.profiles_state(updated)})
+
+
+@app.get("/api/inventory")
+def inventory_status():
+    try:
+        profile = quality_rules.resolve_profile(_read_config(), request.args.get("rule"))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    return jsonify({"ok": True, "inventory": _quality_inventory(profile),
+                    "latest": platform_store.load_inventory_latest(WEB_DATA_DIR),
+                    "check": _quality_check_status(),
+                    "qualified_url": f"{_public_base()}/api/export/qualified-proxies?token={_export_token()}"})
+
+
+def _run_quality_check(urls, profile, data_dir):
+    error_name = None
+    try:
+        for offset in range(0, len(urls), 50):
+            batch = urls[offset:offset + 50]
+            proxy_quality.filter_proxies(batch, settings=profile, data_dir=data_dir)
+            with _QUALITY_CHECK_LOCK:
+                _QUALITY_CHECK["completed"] = offset + len(batch)
+        inventory = _quality_inventory(profile, data_dir=data_dir, urls=urls)
+        platform_store.save_inventory_snapshot(data_dir, inventory, min_interval_sec=0)
+        platform_store.append_audit(data_dir, "quality", "check_complete", {
+            "profile_id": profile["id"], "version": profile["version"],
+            "scanned": inventory["scanned"], "accepted": inventory["accepted"],
+            "rejected": inventory["rejected"],
+        })
+    except Exception as error:
+        # Exceptions from transports or storage can embed proxy credentials.
+        error_name = type(error).__name__
+        try:
+            platform_store.append_audit(data_dir, "quality", "check_failed", {"error": error_name})
+        except OSError:
+            pass
+    finally:
+        with _QUALITY_CHECK_LOCK:
+            _QUALITY_CHECK.update(running=False, error=error_name)
+
+
+@app.post("/api/quality/check")
+def quality_check():
+    try:
+        payload = _quality_payload()
+        profile = quality_rules.resolve_profile(_read_config(), payload.get("rule"))
+        if not profile["proxy_quality_enabled"]:
+            raise ValueError("请先在当前规则中启用质检")
+        urls = list(dict.fromkeys(_live_proxy_body().splitlines()))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    with _QUALITY_CHECK_LOCK:
+        if _QUALITY_CHECK["running"]:
+            return jsonify({"error": "已有质检任务正在运行"}), 409
+        _QUALITY_CHECK.update(running=True, completed=0, total=len(urls), error=None,
+                              profile_id=profile["id"], version=profile["version"])
+        job = threading.Thread(target=_run_quality_check, args=(urls, profile, Path(WEB_DATA_DIR)),
+                               name="nodes-quality-check", daemon=True)
+        try:
+            job.start()
+        except RuntimeError:
+            _QUALITY_CHECK.update(running=False, error="ThreadStartError")
+            return jsonify({"error": "无法启动质检任务"}), 503
+        status = dict(_QUALITY_CHECK)
+    return jsonify({"ok": True, "check": status}), 202
+
+
+@app.post("/api/quality/dry-run")
+def quality_dry_run():
+    try:
+        payload = _quality_payload()
+        text = payload.get("text")
+        if not isinstance(text, str):
+            raise ValueError("请逐行填写代理 URL")
+        lines = list(dict.fromkeys(line.strip() for line in text.splitlines() if line.strip()))
+        if not 1 <= len(lines) <= 50:
+            raise ValueError("每次试测需要 1-50 条代理")
+        for line in lines:
+            _clean_proxy_url(line, "试测代理")
+        profile = quality_rules.resolve_profile(_read_config(), payload.get("rule"))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    _accepted, report = proxy_quality.filter_proxies(
+        lines, settings=profile, data_dir=WEB_DATA_DIR, use_cache=False,
+    )
+    return jsonify({"ok": True, "report": report, "profile_id": profile["id"], "version": profile["version"]})
+
+
+@app.post("/api/inventory/snapshot")
+def inventory_snapshot():
+    try:
+        profile = quality_rules.resolve_profile(_read_config(), _quality_payload().get("rule"))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    inventory = _quality_inventory(profile)
+    platform_store.save_inventory_snapshot(WEB_DATA_DIR, inventory, min_interval_sec=0)
+    return jsonify({"ok": True, "inventory": inventory,
+                    "history": platform_store.load_inventory_history(WEB_DATA_DIR)})
+
+
+def _quality_limit(default, maximum):
+    try:
+        value = int(request.args.get("limit", default))
+    except (ValueError, TypeError) as error:
+        raise ValueError("limit 必须是整数") from error
+    if not 1 <= value <= maximum:
+        raise ValueError(f"limit 必须在 1-{maximum} 之间")
+    return value
+
+
+@app.get("/api/inventory/history")
+def inventory_history():
+    try:
+        limit = _quality_limit(48, 500)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    return jsonify({"ok": True, "history": platform_store.load_inventory_history(WEB_DATA_DIR, limit=limit)})
+
+
+@app.get("/api/audit")
+def quality_audit():
+    try:
+        limit = _quality_limit(50, 200)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    return jsonify({"ok": True, "entries": platform_store.load_audit(
+        WEB_DATA_DIR, kind=request.args.get("kind") or None, limit=limit)})
+
+
+@app.get("/api/export/qualified-proxies")
+def qualified_proxies():
+    if not (_is_authenticated() or _request_has_export_token()):
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        profile = quality_rules.resolve_profile(_read_config(), request.args.get("rule"), for_export=True)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    accepted, _report = proxy_quality.filter_proxies(
+        _live_proxy_body().splitlines(), settings=profile, data_dir=WEB_DATA_DIR, probe_missing=False,
+    )
+    return Response("\n".join(accepted) + ("\n" if accepted else ""), mimetype="text/plain; charset=utf-8")
 
 
 @app.post("/api/pool/ensure-capacity")

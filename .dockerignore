@@ -6,6 +6,9 @@
 !web_app.py
 !wsgi.py
 !pool.py
+!proxy_quality.py
+!platform_store.py
+!quality_rules.py
 !proxyscrape_register.py
 !proxyscrape_auth.py
 !filter_xai_proxies.py
