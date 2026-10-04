@@ -21,30 +21,30 @@
 ## Task 1: Adapt upstream engine and private storage
 
 Files: proxy_quality.py, platform_store.py, test_quality_engine.py.
-- [ ] Write tests: default no probes/exclusions, distinct credential/rule caches, concurrent writes, dry-run isolation, 0600, HTTP failures rejected, untested separate, URL order retained.
-- [ ] Demonstrate failures before porting, then port relevant upstream mechanisms (country/latency/target probes, bounded cache, snapshots/history/audit). Exclude Adobe token mint/publish integration from this scope.
-- [ ] Run `uv run --isolated --no-project --python 3.12 --with requests python -m unittest -q test_quality_engine`.
-- [ ] Review and commit this isolated component.
+- [x] Write tests: default no probes/exclusions, distinct credential/rule caches, concurrent writes, dry-run isolation, 0600, HTTP failures rejected, untested separate, URL order retained.
+- [x] Demonstrate failures before porting, then port relevant upstream mechanisms (country/latency/target probes, bounded cache, snapshots/history/audit). Exclude Adobe token mint/publish integration from this scope.
+- [x] Run `uv run --isolated --no-project --python 3.12 --with requests python -m unittest -q test_quality_engine`.
+- [x] Review and commit this isolated component.
 
 ## Task 2: Wire rules, inventory, jobs and qualified exports
 
 Files: quality_rules.py, web_app.py, test_quality_api.py, .dockerignore, config.local.json.example.
-- [ ] Test API authentication/CSRF, profile validation/versioning, preserved secrets/mail config, export compatibility, all 100 entries, no mutation on dry-run, no network on inventory reads, serial background checking and error cleanup.
-- [ ] Add neutral defaults and validate rules strictly; unknown profiles and invalid country codes/URLs/numbers return 400 before writes. Guard configuration writes with a shared lock. Cache fingerprint makes rule edits invalidate prior observations.
-- [ ] Build inventory only from currently live proxies; exclude stale accounts and unrelated cached results. Background checks use captured settings/data-dir, bounded batch size, release running flag on every exit, produce snapshots and redacted audit.
-- [ ] Run targeted tests and baseline 99-test suite in Python 3.12. New modules explicitly allowed in Docker build.
+- [x] Test API authentication/CSRF, profile validation/versioning, preserved secrets/mail config, export compatibility, all 100 entries, no mutation on dry-run, no network on inventory reads, serial background checking and error cleanup.
+- [x] Add neutral defaults and validate rules strictly; unknown profiles and invalid country codes/URLs/numbers return 400 before writes. Guard configuration writes with a shared lock. Cache fingerprint makes rule edits invalidate prior observations.
+- [x] Build inventory only from currently live proxies; exclude stale accounts and unrelated cached results. Background checks use captured settings/data-dir, bounded batch size, release running flag on every exit, produce snapshots and redacted audit.
+- [x] Run targeted tests and baseline 99-test suite in Python 3.12. New modules explicitly allowed in Docker build.
 
 ## Task 3: Expose rules and inventory in current dashboard
 
 Files: templates/index.html, static/quality.js, static/app.js, static/app.css, tests/quality-ui.test.cjs, README.md, deploy/PUBLIC_VPS.md.
-- [ ] Add nav items/views without removing existing IDs or export selectors. Rules view offers profile selection/save/activate, quality enable, latency/countries/concurrency/cache/optional target settings and small dry-run input. Inventory shows untested/pass/fail distinctly, probe progress, country/latency/endpoint table, history, audit and copy qualified subscription.
-- [ ] Use existing same-origin API/CSRF/error UX; refresh visible inventory every existing four-second dashboard interval. Escape displayed values. Do not display endpoint credentials. Rejecting a check must restore disabled buttons.
-- [ ] Test JS behavior and desktop/mobile rendering with fixture data, without production registrations.
-- [ ] Document upstream provenance, intentionally different defaults, qualified-vs-raw exports and deployment compatibility.
+- [x] Add nav items/views without removing existing IDs or export selectors. Rules view offers profile selection/save/activate, quality enable, latency/countries/concurrency/cache/optional target settings and small dry-run input. Inventory shows untested/pass/fail distinctly, probe progress, country/latency/endpoint table, history, audit and copy qualified subscription.
+- [x] Use existing same-origin API/CSRF/error UX; refresh visible inventory every existing four-second dashboard interval. Escape displayed values. Do not display endpoint credentials. Rejecting a check must restore disabled buttons.
+- [x] Test JS behavior and desktop/mobile rendering with fixture data, without production registrations.
+- [x] Document upstream provenance, intentionally different defaults, qualified-vs-raw exports and deployment compatibility.
 
 ## Task 4: Review, merge and deploy
 
-- [ ] Independent review of baseline..HEAD plus new tests; resolve important findings.
-- [ ] Run Python, JS and image build checks; sync tested changes to main without discarding edits.
-- [ ] Check production active-task state before a restart. Backup current code/config/data, use a new immutable image tag, preserve mounts/certs/tokens and existing Resin subscription.
-- [ ] Verify public login, CSRF, rules/inventory endpoints, UI assets, old exports and service health. Only read/dry-run a small probe sample; don't change production rules or create accounts. Retain rollback image and backup.
+- [x] Independent review of baseline..HEAD plus new tests; resolve important findings.
+- [x] Run Python, JS and image build checks; sync tested changes to main without discarding edits.
+- [x] Check production active-task state before a restart. Backup current code/config/data, use a new immutable image tag, preserve mounts/certs/tokens and existing Resin subscription.
+- [x] Verify public login, CSRF, rules/inventory endpoints, UI assets, old exports and service health. Only read/dry-run a small probe sample; don't change production rules or create accounts. Retain rollback image and backup.

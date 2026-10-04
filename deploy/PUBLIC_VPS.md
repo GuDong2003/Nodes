@@ -91,18 +91,22 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 
 不要把未脱敏的日志贴出；订阅 URL 自身也包含访问凭据。
 
-Resin 固定为 `1.2.0` 并锁定镜像摘要。Nodes 镜像为 `nodes:public-20260922`。
-更新源码后构建与重新部署仅影响本项目：
+Resin 固定为 `1.2.0` 并锁定镜像摘要。当前 Nodes 镜像为
+`nodes:public-quality-0d574d217176`，运行代码对应提交 `0d574d2`。
+更新时构建新的时间戳标签，将 `deploy/compose.public.yml` 的 dashboard image 改为该标签，
+确认没有活动注册任务后仅重新部署 dashboard：
 
 ```bash
-docker build -t nodes:public-20260922 .
-docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml up -d --no-build
+NODES_NEXT_IMAGE="nodes:public-$(date -u +%Y%m%d%H%M%S)"
+docker build -t "$NODES_NEXT_IMAGE" .
+# 将 dashboard image 设置为上面的新标签，再执行：
+docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml up -d --no-build --no-deps dashboard
 ```
 
 初次初始化（幂等，拒绝覆盖不完整的已有配置）：
 
 ```bash
-docker run --rm --network none --entrypoint python -v /opt/nodes:/deployment nodes:public-20260922 /deployment/deploy/initialize.py --root /deployment --domain ps.gudong226.com
+docker run --rm --network none --entrypoint python -v /opt/nodes:/deployment nodes:public-quality-0d574d217176 /deployment/deploy/initialize.py --root /deployment --domain ps.gudong226.com
 docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml exec -T dashboard python deploy/configure_resin.py
 ```
 
@@ -127,6 +131,18 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 ```
 
 ## Caddy 与回滚
+
+2026-10-04 质检更新前的代码、Nodes 配置/账号/节点/任务数据及 Compose 已保存到
+`/opt/nodes/backups/pre-quality-20261004154010`（目录 `0700`）。上一镜像
+`nodes:public-20261004061910` 仍保留。当前登录凭据、Resin 令牌、邮箱设置与订阅配置
+经过哈希及接口检查保持不变；线上仍为 3 个有效账号、300 条节点，质检默认关闭。
+发布镜像内 138 项 Python 测试、本地 17 项 JS 测试及桌面/手机页面验证通过；
+以不写入缓存的方式抽测 3 条现有代理，地理信息及 HTTPS 目标检查均通过。
+Resin 与 Uboy 服务保持运行，未启动注册任务。
+
+需要撤回本次面板更新时，恢复上述备份中的 `compose.public.yml`，再执行
+`docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml up -d --no-build --no-deps dashboard`。
+这个回滚步骤只替换面板镜像，不覆盖现有业务数据。备份中的源码与数据压缩包供单独恢复使用。
 
 Resin 仍使用官方二进制/前端资源，不需要重新编译。Caddy 为 `/ui/` 页面提供
 `deploy/resin-nav/index.html` 入口副本，仅比官方入口多加载一个 `panel-links.js`，
