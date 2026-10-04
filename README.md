@@ -248,3 +248,15 @@ git grep -n -I -E "API_KEY|access_token|refresh_token|proxy_password"
 ```
 
 公开的 ProxyScrape Turnstile sitekey 和 Google OAuth Client ID 来自网页前端，不是账户私钥；邮箱 API Key、登录 Token、邮箱账户和代理凭据必须始终保留在本地。
+
+## 代理质检与库存（选择性上游合并）
+
+本地部署选择性接入 [上游 f140ea8](https://github.com/lichao199208/Nodes/commit/f140ea8e142688b2a4ddfb77f545320d8740f152) 的代理质检、规则与库存历史功能，保留现有 cfmail、全量节点导出、Resin 网关和浏览器修复。
+
+- **默认关闭质检**，不排除国家；可选目标探测使用通用 HTTPS URL。
+- 「质检规则」可保存多个版本化规则并选择当前规则；试测最多 50 条 HTTP/HTTPS 代理，不改动库存。
+- 「代理库存」区分合格、不合格和未检测，显示后台检查进度、节点延迟/国家、快照历史与规则操作记录。页面刷新不会启动探测。
+- 检查会复用有效缓存，仅探测未测或过期节点。默认缓存 600 秒，过期后需再次检查。
+- 新的合格订阅 `/nodes/api/export/qualified-proxies?token=...` 在质检开启时只输出当前规则下缓存有效的合格节点，关闭时输出全部有效节点。原始订阅和 Resin 网关导出保持原有行为。
+
+完整部署说明见 [deploy/PUBLIC_VPS.md](deploy/PUBLIC_VPS.md)。

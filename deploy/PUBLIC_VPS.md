@@ -5,7 +5,7 @@
 
 ## 入口与数据
 
-- `https://ps.gudong226.com/` 跳转到 Nodes `/nodes/`，用户名 `admin`。
+- `https://ps.gudong226.com/` 跳转到 Nodes `/nodes/`，登录名以部署配置为准。
 - `https://ps.gudong226.com/ui/` 为 Resin 控制台，使用独立管理员令牌登录。
 - 两边侧栏分别有「打开 Resin」「打开 Nodes Ops」普通链接，在新标签页打开，不携带凭据。
 - HTTP/SOCKS5 代理入口为 `ps.gudong226.com:8970`，例如用户名 `Nodes.n01`，
@@ -47,6 +47,39 @@ API 保留 `live_slots`、`concurrent_slots` 等旧字段名作为节点数量�
 这不一定是令牌问题。此部署已经单独验证代理令牌有效，需先加入可用节点再使用这些订阅。
 
 ## 运维命令
+
+### 2026-10-04 选择性接入上游质检
+
+功能来源为上游 `lichao199208/Nodes` 的 `f140ea8`；上游 `a43eba9` 的后续变更主要是文档。
+本分支保留本地 cfmail、全量节点导出、Resin 网关格式、任务诊断和 Xvfb 重启修复。
+未接入外部代理供应商拉取、自动删除过期账号或 Adobe 专用探测。
+
+新增「质检规则」「代理库存」页面。默认质检关闭、不排除任何国家；可选目标探测默认
+为通用 HTTPS 连通性检查。质检通过节点直接访问 IP 地理信息服务，浏览页面不会发起探测。
+后台检查仅检测未测或缓存过期的节点，每批最多 50 条，默认 8 个并发；试测最多 50 条，
+不读写缓存、库存或审计。默认缓存有效期 600 秒，缓存过期后显示为未检测。
+
+`/nodes/api/export/qualified-proxies?token=...` 是独立的合格订阅：开启质检时只输出当前
+规则下缓存仍有效的合格节点，关闭时透传全部有效节点；未检测不等于失败。
+原 `/api/export/live-proxies` 和 Resin 的现有订阅地址保持不变。
+更改规则或代理凭据会使相关旧缓存失效；规则保存递增版本，启用规则同时用于合格订阅。
+只有显式后台检查完成或手动快照会新增历史记录，不会因刷新页面无限写入。
+
+新增状态位于 `data/web`：`proxy_quality_cache.json`、`inventory.json`、
+`inventory_history.jsonl`、`audit.jsonl`，均以 `0600` 原子保存，内容不包含代理认证信息。
+规则存入原 `data/config/config.local.json`，并与其他设置和订阅令牌共用写入锁。
+后台质检状态在单个 Gunicorn worker 中共享；部署保留 `--workers=1 --threads=8`。
+
+更新前保留配置和数据备份，构建带时间戳的新镜像，确认无活动注册任务后仅替换 dashboard。
+回滚使用上一镜像及原 Compose 配置即可；不要覆盖现有账号数据、凭据或 Resin/Caddy/Uboy 服务。
+镜像构建需要 `.dockerignore` 放行 `proxy_quality.py`、`platform_store.py`、`quality_rules.py`。
+
+质检回归测试：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 NODES_DISABLE_POOL_LOOP=1 uv run --isolated --no-project --python 3.12 --with requests --with 'Flask>=3.1,<4' python -m unittest -q test_quality_engine test_quality_api
+node --test tests/quality-ui.test.cjs
+```
 
 在 VPS `/opt/nodes` 下执行：
 
