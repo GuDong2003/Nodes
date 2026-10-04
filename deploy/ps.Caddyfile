@@ -26,7 +26,7 @@ ps.gudong226.com {
     }
 
     handle / {
-        redir /nodes/ 302
+        redir * /nodes/ 302
     }
 
     handle {

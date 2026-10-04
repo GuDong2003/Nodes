@@ -1,6 +1,6 @@
 const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
 const APP_BASE = (document.querySelector('meta[name="app-base"]')?.content || '').replace(/\/$/, '');
-const state = { dashboard: null, exports: null, settings: null, currentView: 'dashboard', openTaskId: null };
+const state = { dashboard: null, exports: null, settings: null, pool: null, currentView: 'dashboard', openTaskId: null };
 const titles = {
   dashboard: ['仪表盘', '注册任务与资源状态'],
   accounts: ['账号管理', '导入删除账号，同步过期时间和剩余流量'],
@@ -52,6 +52,7 @@ function statusChip(status) {
 
 function renderPool(pool) {
   if (!pool) return;
+  state.pool = pool;
   const live = pool.live_slots || 0;
   const accounts = pool.live_accounts || 0;
   const slots = `${live} 条（${accounts} 个账号）`;
@@ -60,11 +61,24 @@ function renderPool(pool) {
   document.getElementById('poolNeeded').textContent = pool.needed_accounts ?? 0;
   document.getElementById('poolAuto').textContent = pool.auto_register ? '开' : '关';
   document.getElementById('poolResinUrl').value = pool.subscription_url || '';
-  document.getElementById('poolGptUrl').value = pool.gpt_subscription_url || '';
-  document.getElementById('poolClashUrl').value = pool.clash_subscription_url || '';
-  document.getElementById('poolLadderUrl').value = pool.ladder_subscription_url || '';
   document.getElementById('poolGptSample').value = pool.gpt_gateway_sample || '';
   document.getElementById('metricProxiesNote').textContent = `Resin 订阅 ${slots}`;
+  renderGatewayFormat();
+}
+
+function renderGatewayFormat() {
+  const pool = state.pool || {};
+  const format = document.getElementById('poolGatewayFormat')?.value || 'http';
+  const fields = {
+    http: 'gpt_subscription_url',
+    socks5: 'socks5_subscription_url',
+    clash: 'clash_subscription_url',
+    shadowrocket: 'ladder_subscription_url',
+  };
+  const input = document.getElementById('poolGatewayUrl');
+  if (input) input.value = pool[fields[format]] || '';
+  const button = document.getElementById('downloadGatewayButton');
+  if (button) button.textContent = format === 'clash' ? '下载 YAML' : '打开';
 }
 
 async function copyField(id) {
@@ -325,12 +339,23 @@ async function loadExports() {
     list.innerHTML = data.proxies.length ? data.proxies.map(file => `
       <div class="file-row"><span class="file-name">${escapeHtml(file.name)}</span>
       <span class="file-meta">${file.count} 条</span><span class="file-meta">${formatDate(file.modified_at)}</span>
-      <a class="download-link" href="${appUrl('/download/proxies/' + encodeURIComponent(file.name))}">下载</a></div>`).join('') : '<div class="empty-cell">暂无代理文件</div>';
+      <a class="download-link proxy-file-download" data-file="${escapeHtml(file.name)}" href="${appUrl('/download/proxies/' + encodeURIComponent(file.name))}">下载</a></div>`).join('') : '<div class="empty-cell">暂无代理文件</div>';
+    updateProxyFileLinks();
     const latest = data.accounts[0];
     const button = document.getElementById('downloadLatestAccounts');
     button.disabled = !latest;
     button.onclick = () => { if (latest) window.location.href = appUrl(`/download/accounts/${encodeURIComponent(latest.name)}`); };
   } catch (error) { toast(error.message, true); }
+}
+
+function updateProxyFileLinks() {
+  const format = document.getElementById('proxyFileFormat')?.value || 'http';
+  document.querySelectorAll('.proxy-file-download').forEach(link => {
+    const name = link.dataset.file || '';
+    const suffix = format === 'http' ? '' : `?format=${encodeURIComponent(format)}`;
+    link.href = appUrl(`/download/proxies/${encodeURIComponent(name)}${suffix}`);
+    link.textContent = format === 'http' ? '下载' : `下载 ${format}`;
+  });
 }
 
 async function loadTasks() {
@@ -622,9 +647,12 @@ document.getElementById('ensureCapacityButton').addEventListener('click', async 
 document.querySelectorAll('[data-copy]').forEach(button => {
   button.addEventListener('click', () => copyField(button.dataset.copy).catch(error => toast(error.message, true)));
 });
-document.getElementById('downloadClashButton')?.addEventListener('click', () => {
-  window.location.href = appUrl('/api/export/clash.yml');
+document.getElementById('poolGatewayFormat')?.addEventListener('change', renderGatewayFormat);
+document.getElementById('downloadGatewayButton')?.addEventListener('click', () => {
+  const url = document.getElementById('poolGatewayUrl')?.value;
+  if (url) window.location.href = url;
 });
+document.getElementById('proxyFileFormat')?.addEventListener('change', updateProxyFileLinks);
 
 refreshDashboard();
 loadExports();

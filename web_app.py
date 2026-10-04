@@ -526,6 +526,7 @@ def _subscription_urls():
     gpt_internal = f"{internal_base}/api/export/gpt-gateway?token={token}"
     clash_public = f"{public_base}/api/export/clash.yml?token={token}"
     ladder_public = f"{public_base}/api/export/ladder?token={token}"
+    socks5_public = f"{public_base}/api/export/socks5?token={token}"
     return {
         "resin_internal": internal,
         "resin_public": public,
@@ -533,6 +534,7 @@ def _subscription_urls():
         "gpt_public": gpt_public,
         "clash_public": clash_public,
         "ladder_public": ladder_public,
+        "socks5_public": socks5_public,
     }
 
 
@@ -541,6 +543,20 @@ def _gpt_gateway_body(settings, live_slots):
     if not token:
         return ""
     return "\n".join(pool.gpt_gateway_lines(
+        int(live_slots),
+        token,
+        settings["gateway_host"],
+        settings["gateway_port"],
+        auth_version,
+        settings["gateway_platform"],
+    )) + "\n"
+
+
+def _socks5_gateway_body(settings, live_slots):
+    token, auth_version = pool.resin_auth(_read_config())
+    if not token:
+        return ""
+    return "\n".join(pool.socks5_gateway_lines(
         int(live_slots),
         token,
         settings["gateway_host"],
@@ -589,7 +605,7 @@ def _start_pool_loop():
 @app.before_request
 def protect_routes():
     _start_pool_loop()
-    if request.endpoint in {"login", "health", "static", "live_proxies", "gpt_gateway", "clash_export", "ladder_export"}:
+    if request.endpoint in {"login", "health", "static", "live_proxies", "gpt_gateway", "clash_export", "ladder_export", "socks5_export"}:
         return None
     if request.endpoint == "ensure_capacity" and _request_has_export_token():
         return None
@@ -733,6 +749,17 @@ def ladder_export():
         return jsonify({"error": "unauthorized"}), 401
     settings, _entries, cap = _pool_snapshot()
     body = _ladder_body(settings, cap["live_slots"])
+    if not body.strip():
+        return jsonify({"error": "resin_proxy_token_missing"}), 503
+    return Response(body, mimetype="text/plain; charset=utf-8")
+
+
+@app.get("/api/export/socks5")
+def socks5_export():
+    if not _request_has_export_token():
+        return jsonify({"error": "unauthorized"}), 401
+    settings, _entries, cap = _pool_snapshot()
+    body = _socks5_gateway_body(settings, cap["live_slots"])
     if not body.strip():
         return jsonify({"error": "resin_proxy_token_missing"}), 503
     return Response(body, mimetype="text/plain; charset=utf-8")
@@ -1022,6 +1049,7 @@ def _pool_public():
         "gpt_subscription_url": urls["gpt_public"],
         "clash_subscription_url": urls["clash_public"],
         "ladder_subscription_url": urls["ladder_public"],
+        "socks5_subscription_url": urls["socks5_public"],
         "gpt_gateway_sample": gateway_sample,
         "gpt_gateway_host": f"{settings['gateway_host']}:{settings['gateway_port']}",
         "auth_version": auth_version,
@@ -1497,6 +1525,24 @@ def download(kind, filename):
         directory = NODE_DIR
     else:
         abort(404)
+    export_format = str(request.args.get("format") or "http").strip().lower()
+    if kind == "proxies" and export_format not in {"http", "http_url", "url"}:
+        path = directory / filename
+        try:
+            lines = [
+                pool.format_proxy_line(line, export_format)
+                for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()
+                if line.strip()
+            ]
+        except (OSError, ValueError) as error:
+            if isinstance(error, ValueError):
+                return jsonify({"error": str(error)}), 400
+            abort(404)
+        body = "\n".join(lines) + ("\n" if lines else "")
+        output_name = f"{Path(filename).stem}.{export_format}.txt"
+        response = Response(body, mimetype="text/plain; charset=utf-8")
+        response.headers["Content-Disposition"] = f'attachment; filename="{output_name}"'
+        return response
     return send_from_directory(directory, filename, as_attachment=True)
 
 

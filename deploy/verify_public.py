@@ -25,7 +25,8 @@ def verify(config_dir):
     get("/nodes/api/health")
     for path in ("/nodes/api/dashboard", "/nodes/api/settings", "/api/v1/system/info",
                  "/nodes/api/export/live-proxies", "/nodes/api/export/clash.yml",
-                 "/nodes/api/export/gpt-gateway", "/nodes/api/export/ladder"):
+                 "/nodes/api/export/gpt-gateway", "/nodes/api/export/ladder",
+                 "/nodes/api/export/socks5"):
         get(path, 401)
     print("HTTPS verified; unauthenticated management and exports denied.")
 
@@ -40,7 +41,8 @@ def verify(config_dir):
     assert not dashboard["active_task"], "Unexpected registration task"
     assert not dashboard["pool"]["auto_register"]
     assert dashboard["pool"]["has_resin_token"]
-    for key in ("subscription_url_public", "gpt_subscription_url", "clash_subscription_url", "ladder_subscription_url"):
+    for key in ("subscription_url_public", "gpt_subscription_url", "clash_subscription_url",
+                "ladder_subscription_url", "socks5_subscription_url"):
         assert dashboard["pool"][key].startswith(nodes_url + "/api/export/")
     print("Login/cookie/CSRF token and HTTPS subscription URLs verified.")
 

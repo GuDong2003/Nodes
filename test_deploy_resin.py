@@ -44,6 +44,8 @@ class ResinBootstrapTests(unittest.TestCase):
                     return self.respond(401, {})
                 kind, identifier = self.path.split("/")[-2:]
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if kind == "subscriptions" and "source_type" in body:
+                    return self.respond(400, {"error": "source_type is read-only"})
                 item = next(item for item in objects[kind] if item["id"] == identifier)
                 item.update(body)
                 self.respond(200, item)

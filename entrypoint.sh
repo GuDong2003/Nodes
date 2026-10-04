@@ -5,6 +5,7 @@ display="${DISPLAY:-:99}"
 display_number="${display#:}"
 display_number="${display_number%%.*}"
 socket="/tmp/.X11-unix/X${display_number}"
+lock="/tmp/.X${display_number}-lock"
 log="/tmp/nodes-xvfb.log"
 
 cleanup() {
@@ -15,18 +16,26 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-Xvfb "$display" -screen 0 1920x1080x24 -nolisten tcp >"$log" 2>&1 &
-xvfb_pid=$!
+# A previous Xvfb can leave its socket and lock behind after an unclean stop.
+# Only keep them when the display is actually responsive; otherwise remove the
+# stale runtime files before starting a fresh server.
+if xdpyinfo -display "$display" >/dev/null 2>&1; then
+  xvfb_pid=""
+else
+  rm -f "$socket" "$lock"
+  Xvfb "$display" -screen 0 1920x1080x24 -nolisten tcp >"$log" 2>&1 &
+  xvfb_pid=$!
+fi
 
 i=0
-while [ ! -S "$socket" ]; do
-  if ! kill -0 "$xvfb_pid" 2>/dev/null; then
+while ! xdpyinfo -display "$display" >/dev/null 2>&1; do
+  if [ -n "$xvfb_pid" ] && ! kill -0 "$xvfb_pid" 2>/dev/null; then
     cat "$log" >&2
     exit 1
   fi
   i=$((i + 1))
   if [ "$i" -ge 100 ]; then
-    echo "Xvfb did not create $socket" >&2
+    echo "Xvfb did not make $display responsive" >&2
     cat "$log" >&2
     exit 1
   fi

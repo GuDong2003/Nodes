@@ -21,11 +21,12 @@ def configure(config_dir, resin_base):
             raise RuntimeError(f"Resin {method} {path.split('?')[0]} returned {response.status_code}")
         return response.json()
 
-    def ensure(kind, key, wanted, body):
+    def ensure(kind, key, wanted, body, patch_body=None):
         items = call("GET", kind + "?limit=1000")["items"]
         existing = next((item for item in items if item.get(key) == wanted), None)
         if existing:
-            result = call("PATCH", kind + "/" + existing["id"], body)
+            result = call("PATCH", kind + "/" + existing["id"],
+                          body if patch_body is None else patch_body)
         else:
             result = call("POST", kind, body)
         print(f"Configured {kind}: {result['id']}")
@@ -36,6 +37,10 @@ def configure(config_dir, resin_base):
     })
     ensure("subscriptions", "name", "Nodes", {
         "name": "Nodes", "source_type": "remote", "enabled": True,
+        "url": config["internal_base_url"].rstrip("/") + "/api/export/live-proxies?token=" + config["export_token"],
+        "update_interval": "2m", "incremental_alive_nodes": False,
+    }, {
+        "name": "Nodes", "enabled": True,
         "url": config["internal_base_url"].rstrip("/") + "/api/export/live-proxies?token=" + config["export_token"],
         "update_interval": "2m", "incremental_alive_nodes": False,
     })

@@ -110,6 +110,8 @@ input:disabled, select:disabled { background: #f3f5f7; color: #738092; }
 .pool-links { display: grid; gap: 12px; padding: 16px 18px 8px; }
 .pool-links label { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
 .pool-links label span { grid-column: 1 / -1; }
+.export-format-control { display: flex; align-items: center; gap: 8px; min-width: 230px; color: var(--muted); font-size: 12px; }
+.export-format-control select { width: auto; min-width: 155px; }
 .pool-hint { padding: 0 18px 16px; }
 .runtime-strip { display: grid; grid-template-columns: repeat(3, 1fr); margin: 15px 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .runtime-strip div { min-width: 0; padding: 10px; border-right: 1px solid var(--line); }

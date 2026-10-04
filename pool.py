@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 import base64
-from urllib.parse import quote, quote_plus, urlsplit
+from urllib.parse import quote, quote_plus, unquote, urlsplit
 
 
 DEFAULT_TARGET_SLOTS = 80
@@ -192,15 +192,55 @@ def gateway_identity(index, auth_version, platform, token):
     return token, f"{platform}:{account}"
 
 
-def gpt_gateway_lines(count, token, host, port, auth_version, platform):
+def gateway_proxy_lines(count, token, host, port, auth_version, platform, scheme):
     lines = []
     total = max(0, int(count))
     for index in range(1, total + 1):
         user, password = gateway_identity(index, auth_version, platform, token)
         lines.append(
-            f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{int(port)}"
+            f"{scheme}://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{int(port)}"
         )
     return lines
+
+
+def gpt_gateway_lines(count, token, host, port, auth_version, platform):
+    return gateway_proxy_lines(count, token, host, port, auth_version, platform, "http")
+
+
+def socks5_gateway_lines(count, token, host, port, auth_version, platform):
+    return gateway_proxy_lines(count, token, host, port, auth_version, platform, "socks5")
+
+
+def format_proxy_line(value, export_format):
+    """Render a saved HTTP proxy URL in a simple text format."""
+    aliases = {
+        "http": "http",
+        "http_url": "http",
+        "url": "http",
+        "auth": "auth",
+        "userpass": "auth",
+        "user_pass": "auth",
+        "hostport": "hostport",
+        "host_port": "hostport",
+    }
+    mode = aliases.get(str(export_format or "").strip().lower())
+    if mode is None:
+        raise ValueError(f"不支持的代理导出格式: {export_format}")
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if mode == "http":
+        return text
+    parsed = urlsplit(text if "://" in text else "//" + text)
+    if not parsed.hostname or parsed.port is None:
+        raise ValueError("代理地址格式无效")
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    hostport = f"{host}:{parsed.port}"
+    if mode == "hostport":
+        return hostport
+    return f"{unquote(parsed.username or '')}:{unquote(parsed.password or '')}@{hostport}"
 
 
 def _yaml_quote(value):

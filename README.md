@@ -127,6 +127,11 @@ Resin 的 live-proxies 订阅导出每个有效账号的全部去重代理地址
 旧 `pool_slots_per_account` 设置已停用。`pool_expected_proxies_per_account` 默认 100，
 仅用于估算补号数；`pool_target_slots` 是补池目标，不是订阅条数上限。
 
+Dashboard 的「代理输出」支持按需选择文件格式：原始 HTTP URL、
+`user:pass@host:port` 和 `host:port`。网关订阅还支持 HTTP、Resin 8970 SOCKS5、
+Clash/Stash YAML 和 Shadowrocket URI；SOCKS5 输出使用 Resin 的独立网关身份，
+不会把 HTTP 上游节点伪装成 SOCKS5。
+
 ### 复用已生成节点作为出口
 
 在「代理输出 → 注册出口代理」勾选「使用已生成节点」，点击保存即可通过现有 Resin 池
