@@ -28,6 +28,10 @@ function fixture() {
     addEventListener(type, fn) { this.listeners[type] = fn; },
     async fire(type) { return this.listeners[type]?.({ preventDefault() {}, target: this }); },
   }]));
+  Object.entries(fields).forEach(([id, key]) => {
+    if (typeof defaults[key] === 'boolean') elements[id].checked = defaults[key];
+    else elements[id].value = String(defaults[key]);
+  });
   const document = { getElementById: id => elements[id] };
   const context = { window: {}, document };
   const script = path.join(__dirname, '../static/quality.js');
@@ -59,6 +63,13 @@ function fixture() {
   return { elements, state, calls, errors, overrides, controller,
     get profiles() { return profiles; }, setProfiles(v) { profiles = v; },
     get inventory() { return inventory; }, setInventory(v) { inventory = v; },
+    async edit(id, value) {
+      if (elements[id].disabled) return false;
+      if (typeof value === 'boolean') elements[id].checked = value;
+      else elements[id].value = value;
+      await elements.qualityForm.fire('input');
+      return true;
+    },
     async show(view) { state.currentView = view; await controller.onShow(view); },
   };
 }
@@ -176,18 +187,17 @@ test('activation serializes profile writes until its response arrives', async ()
   assert.equal(p.elements.qualitySave.disabled, false);
 });
 
-test('an early edit during initial profile loading preserves edits and leaves saved and new rules usable', async () => {
+test('initial profile loading blocks early edits and leaves saved and new rules usable', async () => {
   const p = fixture(); const req = deferred();
   p.profiles.profiles.push({ ...p.profiles.profiles[0], id: 'fast', name: '快速', proxy_max_latency_ms: 900 });
   p.overrides['/api/quality/profiles'] = () => req.promise;
   const opening = p.show('rules');
-  p.elements.qualityProfileName.value = '加载期间的编辑'; p.elements.qualityEnable.checked = true;
-  await p.elements.qualityForm.fire('input');
+  await p.edit('qualityProfileName', '加载期间的编辑'); await p.edit('qualityEnable', true);
   req.resolve(p.profiles); await opening;
   assert.equal(p.elements.qualityProfileSelect.value, 'default');
   assert.equal(p.elements.qualityProfileId.value, 'default');
-  assert.equal(p.elements.qualityProfileName.value, '加载期间的编辑');
-  assert.equal(p.elements.qualityEnable.checked, true);
+  assert.equal(p.elements.qualityProfileName.value, '默认规则');
+  assert.equal(p.elements.qualityEnable.checked, false);
   assert.equal(p.elements.qualitySave.disabled, false);
   assert.equal(p.elements.qualityActivate.disabled, false);
   assert.match(p.elements.qualityProfileSelect.innerHTML, /value="fast"/);
@@ -195,11 +205,47 @@ test('an early edit during initial profile loading preserves edits and leaves sa
   assert.match(p.elements.qualityActiveRule.textContent, /default/);
   await p.show('inventory'); await p.show('rules');
   assert.equal(p.elements.qualityProfileId.value, 'default');
-  assert.equal(p.elements.qualityProfileName.value, '加载期间的编辑');
+  assert.equal(p.elements.qualityProfileName.value, '默认规则');
   p.elements.qualityProfileSelect.value = 'fast'; await p.elements.qualityProfileSelect.fire('change');
   assert.equal(p.elements.qualityProfileId.value, 'fast');
   assert.equal(Number(p.elements.qualityLatency.value), 900);
   p.elements.qualityProfileSelect.value = '__new__'; await p.elements.qualityProfileSelect.fire('change');
   assert.equal(p.elements.qualityProfileId.disabled, false);
   assert.equal(p.elements.qualityProfileId.value, '');
+});
+
+test('a name-only save after delayed initialization preserves the active saved policy', async () => {
+  const p = fixture(); const req = deferred();
+  p.profiles.profiles[0] = { ...p.profiles.profiles[0], proxy_quality_enabled: true,
+    proxy_max_latency_ms: 900, proxy_exclude_countries: 'JP' };
+  p.overrides['/api/quality/profiles'] = () => req.promise;
+  const opening = p.show('rules');
+  const earlyEdit = await p.edit('qualityProfileName', '过早的编辑');
+  req.resolve(p.profiles); await opening;
+  await p.edit('qualityProfileName', '仅修改名称');
+  p.overrides['/api/quality/profiles/default'] = async options => ({ ...p.profiles,
+    profile: { ...p.profiles.profiles[0], ...JSON.parse(options.body), version: 1 } });
+  await p.elements.qualityForm.fire('submit');
+  const saved = p.calls.find(x => x.url === '/api/quality/profiles/default');
+  assert.deepEqual(JSON.parse(saved.body), { name: '仅修改名称', ...defaults,
+    proxy_quality_enabled: true, proxy_max_latency_ms: 900, proxy_exclude_countries: 'JP' });
+  assert.equal(earlyEdit, false);
+});
+
+test('failed initial profile load keeps edits disabled and can initialize on a later visit', async () => {
+  const p = fixture(); const req = deferred();
+  p.overrides['/api/quality/profiles'] = () => req.promise;
+  const opening = p.show('rules'); req.reject(Error('规则读取失败')); await opening;
+  assert.equal(p.elements.qualityProfileName.disabled, true);
+  assert.equal(p.elements.qualityEnable.disabled, true);
+  assert.equal(p.elements.qualityProfileSelect.disabled, true);
+  assert.equal(p.elements.qualitySave.disabled, true);
+  assert.deepEqual(p.errors.at(-1), ['规则读取失败', true]);
+  p.overrides['/api/quality/profiles'] = async () => p.profiles;
+  await p.show('dashboard'); await p.show('rules');
+  assert.equal(p.elements.qualityProfileName.value, '默认规则');
+  assert.equal(p.elements.qualityProfileName.disabled, false);
+  assert.equal(p.elements.qualityEnable.disabled, false);
+  assert.equal(p.elements.qualityProfileSelect.disabled, false);
+  assert.equal(p.elements.qualitySave.disabled, false);
 });

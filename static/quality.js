@@ -32,10 +32,13 @@
       el('qualitySave').disabled = saving || activating || !profiles;
       el('qualityActivate').disabled = activating || saving || !saved;
       el('qualityDryButton').disabled = dryRunning || saving || !saved;
-      el('qualityProfileId').disabled = selected !== '__new__';
+      el('qualityProfileSelect').disabled = !profiles;
+      el('qualityProfileName').disabled = !profiles;
+      el('qualityEnable').disabled = !profiles;
+      el('qualityProfileId').disabled = !profiles || selected !== '__new__';
       const enabled = el('qualityEnable').checked;
       Object.keys(fields).filter(id => id !== 'qualityEnable').forEach(id => {
-        el(id).disabled = !enabled || (id === 'qualityTargetUrl' && !el('qualityTargetEnable').checked);
+        el(id).disabled = !profiles || !enabled || (id === 'qualityTargetUrl' && !el('qualityTargetEnable').checked);
       });
     }
 
@@ -61,15 +64,11 @@
 
     function loadProfiles() {
       if (profileRequest) return profileRequest;
-      const revision = editRevision;
       profileRequest = (async () => {
         try {
           profiles = await api('/api/quality/profiles');
           renderProfiles(profiles.active_id);
-          el('qualityProfileId').value = profiles.active_id;
-          if (editRevision === revision) {
-            fillProfile(profiles.profiles.find(p => p.id === profiles.active_id));
-          }
+          fillProfile(profiles.profiles.find(p => p.id === profiles.active_id));
         } catch (error) { toast(error.message, true); }
         finally { profileRequest = null; updateFormState(); }
       })();
