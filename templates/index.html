@@ -6,7 +6,7 @@
   <meta name="csrf-token" content="{{ csrf_token }}">
   <meta name="app-base" content="{{ app_base }}">
   <title>Nodes Ops</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=panel-links1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=quality1">
 </head>
 <body>
   <div class="app-shell">
@@ -21,6 +21,8 @@
         <button class="nav-item" data-view="mail"><span class="nav-icon">邮</span><span>邮箱服务</span></button>
         <button class="nav-item" data-view="captcha"><span class="nav-icon">码</span><span>打码接口</span></button>
         <button class="nav-item" data-view="proxies"><span class="nav-icon">代</span><span>代理输出</span></button>
+        <button class="nav-item" data-view="rules"><span class="nav-icon">规</span><span>质量规则</span></button>
+        <button class="nav-item" data-view="inventory"><span class="nav-icon">检</span><span>节点库存</span></button>
         <button class="nav-item" data-view="tasks"><span class="nav-icon">志</span><span>任务日志</span></button>
         <a class="nav-item nav-panel-link" id="open-resin" href="https://ps.gudong226.com/ui/dashboard" target="_blank" rel="noopener noreferrer"><span class="nav-icon" aria-hidden="true">↗</span><span>打开 Resin</span></a>
       </nav>
@@ -199,6 +201,76 @@
           </section>
         </section>
 
+        <section class="view quality-view" id="view-rules">
+          <section class="panel">
+            <div class="panel-heading"><div><h2>质量规则</h2><p>保存规则后可单独启用；库存与合格订阅使用当前启用的规则</p></div></div>
+            <div class="quality-profile-picker">
+              <label for="qualityProfileSelect"><span>选择规则</span><select id="qualityProfileSelect"><option value="">正在加载</option></select></label>
+              <p class="settings-hint" id="qualityActiveRule" aria-live="polite">正在读取当前规则</p>
+            </div>
+            <form id="qualityForm" class="settings-form">
+              <div class="form-grid">
+                <label for="qualityProfileId"><span>规则 ID</span><input id="qualityProfileId" pattern="[a-z0-9_-]{1,64}" maxlength="64" placeholder="例如 relaxed" required disabled></label>
+                <label for="qualityProfileName"><span>规则名称</span><input id="qualityProfileName" maxlength="80" required></label>
+              </div>
+              <label class="check-row" for="qualityEnable"><input id="qualityEnable" type="checkbox"><span>启用节点质量过滤</span></label>
+              <p class="settings-hint">默认关闭。未启用时所有节点显示为未测，通过与未通过均为零；合格订阅仍透传全部有效节点。原始导出始终保留完整节点。</p>
+              <div class="form-grid">
+                <label for="qualityLatency"><span>最大延迟（毫秒）</span><input id="qualityLatency" type="number" min="1" max="120000" step="1" value="3000" required></label>
+                <label for="qualityCountries"><span>排除国家代码</span><input id="qualityCountries" placeholder="CN,RU（逗号分隔，留空不过滤）"></label>
+                <label for="qualityWorkers"><span>检查并发数</span><input id="qualityWorkers" type="number" min="1" max="32" step="1" value="8" required></label>
+                <label for="qualityCache"><span>结果缓存时间（秒）</span><input id="qualityCache" type="number" min="10" max="86400" step="1" value="600" required></label>
+                <label for="qualityTimeout"><span>请求超时（秒）</span><input id="qualityTimeout" type="number" min="1" max="60" step="1" value="12" required></label>
+              </div>
+              <label class="check-row" for="qualityTargetEnable"><input id="qualityTargetEnable" type="checkbox"><span>额外检查 HTTPS 目标</span></label>
+              <label for="qualityTargetUrl"><span>目标 HTTPS 地址（不含账号密码）</span><input id="qualityTargetUrl" type="url" value="https://cp.cloudflare.com/generate_204" required></label>
+              <div class="quality-actions">
+                <button class="primary-button settings-save" type="submit" id="qualitySave" disabled>保存规则</button>
+                <button class="secondary-button" type="button" id="qualityActivate" disabled>启用所选规则</button>
+              </div>
+              <p class="settings-hint">保存不会自动切换启用规则。启用操作使用已保存的版本，不包含尚未保存的编辑。</p>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><h2>小样本试测</h2><p>使用上方所选规则的已保存版本；未保存的编辑不会用于试测</p></div></div>
+            <form id="qualityDryForm" class="settings-form">
+              <label for="qualityDryText"><span>HTTP / HTTPS 代理 URL（每行一条，1–50 条）</span><textarea id="qualityDryText" rows="4" placeholder="https://user:password@proxy.example:8443" required spellcheck="false"></textarea></label>
+              <p class="settings-hint">试测不读写库存缓存。结果仅展示计数与规则版本，不显示代理凭据。</p>
+              <button class="secondary-button quality-fit" type="submit" id="qualityDryButton" disabled>试测保存的规则</button>
+              <p class="quality-report settings-hint" id="qualityDryReport" role="status" aria-live="polite">尚未试测</p>
+            </form>
+          </section>
+        </section>
+
+        <section class="view quality-view" id="view-inventory">
+          <div class="metric-grid">
+            <article class="metric"><span>节点总数</span><strong id="qualityScanned">—</strong><small>有效账号的全部节点</small></article>
+            <article class="metric"><span>通过</span><strong id="qualityAccepted">—</strong><small>已测且符合当前规则</small></article>
+            <article class="metric"><span>未通过</span><strong id="qualityRejected">—</strong><small>已测且不符合当前规则</small></article>
+            <article class="metric"><span>未测</span><strong id="qualityUntested">—</strong><small>未检查、缓存过期或规则未启用</small></article>
+          </div>
+          <section class="panel">
+            <div class="panel-heading"><div><h2>节点库存</h2><p id="qualityInventoryState" aria-live="polite">正在读取缓存</p></div><div class="heading-actions">
+              <button class="secondary-button" type="button" id="qualityCheck" disabled>检查未测/过期节点</button>
+              <button class="secondary-button" type="button" id="qualitySnapshot">保存库存快照</button>
+            </div></div>
+            <div class="quality-inventory-notes">
+              <p class="settings-hint">检查会复用当前规则仍有效的缓存，只探测未测或过期节点。库存每四秒更新；未启用质量规则时，合格订阅透传全部有效节点。</p>
+              <p class="settings-hint" id="qualityProgress" role="status" aria-live="polite">尚未启动检查</p>
+              <label for="qualityQualifiedUrl"><span>合格订阅（使用启用规则）</span><div class="quality-subscription"><input id="qualityQualifiedUrl" readonly><button class="text-button" type="button" data-copy="qualityQualifiedUrl">复制</button></div></label>
+            </div>
+            <div class="table-wrap"><table class="quality-results-table"><thead><tr><th>节点端点</th><th>状态</th><th>国家</th><th>延迟</th><th>出口 IP</th><th>HTTPS 目标</th><th>原因</th><th>检查时间</th></tr></thead><tbody id="qualityResults"><tr><td colspan="8" class="empty-cell">正在加载</td></tr></tbody></table></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><h2>库存历史</h2><p>最近快照，按时间从新到旧展示</p></div></div>
+            <div class="table-wrap"><table class="quality-history-table"><thead><tr><th>记录时间</th><th>规则版本</th><th>总数</th><th>通过</th><th>未通过</th><th>未测</th></tr></thead><tbody id="qualityHistory"><tr><td colspan="6" class="empty-cell">正在加载</td></tr></tbody></table></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><h2>规则审计</h2><p>规则保存、启用与检查结果</p></div></div>
+            <div class="table-wrap"><table class="quality-audit-table"><thead><tr><th>时间</th><th>操作</th><th>执行者</th><th>详情</th></tr></thead><tbody id="qualityAudit"><tr><td colspan="4" class="empty-cell">正在加载</td></tr></tbody></table></div>
+          </section>
+        </section>
+
         <section class="view" id="view-tasks">
           <section class="panel page-panel">
             <div class="panel-heading"><div><h2>任务日志</h2><p>历史执行与产出记录</p></div></div>
@@ -287,6 +359,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="sidebar-scrim" id="sidebarScrim"></div>
   <script src="{{ url_for('static', filename='task-dialog.js') }}?v=task-dialog1" defer></script>
-  <script src="{{ url_for('static', filename='app.js') }}?v=task-dialog2" defer></script>
+  <script src="{{ url_for('static', filename='quality.js') }}?v=quality1" defer></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=quality1" defer></script>
 </body>
 </html>

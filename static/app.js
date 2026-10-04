@@ -7,6 +7,8 @@ const titles = {
   mail: ['邮箱服务', 'Cloudflare Temp Email / 云芯 / YYDS 接口，保存后同步到注册进程'],
   captcha: ['打码接口', '2Captcha / 浏览器打码，保存后同步到注册进程'],
   proxies: ['代理输出', '出口代理设置与导出文件'],
+  rules: ['质量规则', '保存、启用规则与小样本试测'],
+  inventory: ['节点库存', '节点质量、检查进度与历史记录'],
   tasks: ['任务日志', '历史任务进度与执行结果'],
 };
 
@@ -100,6 +102,9 @@ function toast(message, error = false) {
 const taskDialog = window.NodesTaskDialog.create({
   document, state, api, toast, escapeHtml, statusLabel,
 });
+const quality = window.NodesQuality.create({
+  document, state, api, toast, escapeHtml, formatDate,
+});
 
 function showView(view) {
   state.currentView = view;
@@ -113,6 +118,7 @@ function showView(view) {
   if (view === 'mail' || view === 'captcha' || view === 'proxies') loadSettings();
   if (view === 'proxies') loadExports();
   if (view === 'tasks') loadTasks();
+  quality.onShow(view);
 }
 
 function renderTasks(tasks, target, compact = false) {
@@ -661,4 +667,5 @@ setInterval(() => {
   refreshDashboard();
   if (state.currentView === 'tasks') loadTasks();
   taskDialog.refresh();
+  quality.refresh();
 }, 4000);
