@@ -175,3 +175,31 @@ test('activation serializes profile writes until its response arrives', async ()
   req.resolve(p.profiles); await activation;
   assert.equal(p.elements.qualitySave.disabled, false);
 });
+
+test('an early edit during initial profile loading preserves edits and leaves saved and new rules usable', async () => {
+  const p = fixture(); const req = deferred();
+  p.profiles.profiles.push({ ...p.profiles.profiles[0], id: 'fast', name: '快速', proxy_max_latency_ms: 900 });
+  p.overrides['/api/quality/profiles'] = () => req.promise;
+  const opening = p.show('rules');
+  p.elements.qualityProfileName.value = '加载期间的编辑'; p.elements.qualityEnable.checked = true;
+  await p.elements.qualityForm.fire('input');
+  req.resolve(p.profiles); await opening;
+  assert.equal(p.elements.qualityProfileSelect.value, 'default');
+  assert.equal(p.elements.qualityProfileId.value, 'default');
+  assert.equal(p.elements.qualityProfileName.value, '加载期间的编辑');
+  assert.equal(p.elements.qualityEnable.checked, true);
+  assert.equal(p.elements.qualitySave.disabled, false);
+  assert.equal(p.elements.qualityActivate.disabled, false);
+  assert.match(p.elements.qualityProfileSelect.innerHTML, /value="fast"/);
+  assert.match(p.elements.qualityProfileSelect.innerHTML, /value="__new__"/);
+  assert.match(p.elements.qualityActiveRule.textContent, /default/);
+  await p.show('inventory'); await p.show('rules');
+  assert.equal(p.elements.qualityProfileId.value, 'default');
+  assert.equal(p.elements.qualityProfileName.value, '加载期间的编辑');
+  p.elements.qualityProfileSelect.value = 'fast'; await p.elements.qualityProfileSelect.fire('change');
+  assert.equal(p.elements.qualityProfileId.value, 'fast');
+  assert.equal(Number(p.elements.qualityLatency.value), 900);
+  p.elements.qualityProfileSelect.value = '__new__'; await p.elements.qualityProfileSelect.fire('change');
+  assert.equal(p.elements.qualityProfileId.disabled, false);
+  assert.equal(p.elements.qualityProfileId.value, '');
+});

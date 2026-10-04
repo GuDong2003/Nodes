@@ -65,8 +65,9 @@
       profileRequest = (async () => {
         try {
           profiles = await api('/api/quality/profiles');
+          renderProfiles(profiles.active_id);
+          el('qualityProfileId').value = profiles.active_id;
           if (editRevision === revision) {
-            renderProfiles(profiles.active_id);
             fillProfile(profiles.profiles.find(p => p.id === profiles.active_id));
           }
         } catch (error) { toast(error.message, true); }
