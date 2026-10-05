@@ -573,6 +573,24 @@ const settingFields = {
   proxy: ['http_proxy', 'https_proxy', 'no_proxy'],
 };
 
+const captchaApiDefaults = {
+  '2captcha': 'https://api.2captcha.com',
+  yescaptcha: 'https://api.yescaptcha.com',
+  capmonster: 'https://api.capmonster.cloud',
+  browser: '',
+};
+
+function applyCaptchaProviderDefault(force = false) {
+  const provider = document.getElementById('captcha_provider');
+  const apiBase = document.getElementById('captcha_api_base');
+  if (!provider || !apiBase) return;
+  const next = captchaApiDefaults[provider.value] ?? '';
+  if (force || !apiBase.value.trim() || Object.values(captchaApiDefaults).includes(apiBase.value.trim())) {
+    apiBase.value = next;
+  }
+  apiBase.placeholder = next || 'browser 模式无需 API 地址';
+}
+
 function fillSettings(settings) {
   state.settings = settings;
   Object.entries(settings).forEach(([key, value]) => {
@@ -582,6 +600,7 @@ function fillSettings(settings) {
     else element.value = value ?? '';
   });
   updateProxyMode();
+  applyCaptchaProviderDefault(false);
 }
 
 function updateProxyMode() {
@@ -630,6 +649,9 @@ async function saveSettings(event, keys, successText) {
 
 document.getElementById('mailSettingsForm').addEventListener('submit', event => saveSettings(event, settingFields.mail, '邮箱设置已同步'));
 document.getElementById('captchaSettingsForm').addEventListener('submit', event => saveSettings(event, settingFields.captcha, '打码设置已同步'));
+document.getElementById('captcha_provider')?.addEventListener('change', () => {
+  applyCaptchaProviderDefault(true);
+});
 document.getElementById('proxySettingsForm').addEventListener('submit', event => {
   saveSettings(event, [...settingFields.proxy, 'proxy_enabled', 'proxy_use_pool'], '代理设置已同步');
 });
