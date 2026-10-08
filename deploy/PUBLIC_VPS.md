@@ -101,6 +101,28 @@ Resin 订阅保持 400 条；验证码方式保留为 `browser`，质检和自�
 备份中的 Compose 供对照，避免覆盖之后新增的配置。此次发布仅重建 Nodes 面板，
 Resin 与 Caddy 的启动时间保持不变。
 
+### 2026-10-08 阈值补号与到期统计发布
+
+运行代码 `2dc4ac4` 已发布。仪表盘新增最低有效节点数、最低总剩余流量、检查间隔和每轮上限；
+每轮先同步再判断，任一已配置阈值不足时才补号。账号到期时间统一为北京时间，
+剩余天数/小时按当前时刻计算。自动补号仍关闭，由用户填写阈值后在面板启用。
+
+镜像内及本地 182 项 Python 测试、39 项 JS 测试通过；独立复核和桌面/手机浏览器验证通过。
+真实同步 4/4 个账号成功，仍有 400 条有效节点，总剩余流量约 39.78 GB（发布时）。
+旧账号 dashboard 凭据已失效，现已优先使用其已保存的 API Key 读取公开 Account API，
+没有重新登录、创建新密钥或启动注册。原始/合格订阅及其他导出验证通过。
+
+配置、访问凭据和 Resin 环境文件哈希保持不变。仅将 Compose 中的
+`NODES_DISABLE_POOL_LOOP` 从 `1` 改为 `0`，允许面板控制后台检查，
+现有 `pool_auto_register=false` 保持不变。账号同步更新了账号状态，
+后台检查状态保存在 `data/web/pool_automation.json`（`0600`）。
+
+回滚备份：`/opt/nodes/backups/pre-thresholds-20261008094642`；
+上一镜像：`nodes:public-captcha-36ad331fdd10-20261008045249`。
+回滚时对照备份恢复 dashboard 的旧镜像和 `NODES_DISABLE_POOL_LOOP=1`，
+仅重建 dashboard；保留现有账号/配置/Resin 数据，避免覆盖之后新增的数据和设置。
+本次只重建 Nodes，Resin 和 Caddy 的启动时间保持不变。
+
 在 VPS `/opt/nodes` 下执行：
 
 ```bash
@@ -112,7 +134,7 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 不要把未脱敏的日志贴出；订阅 URL 自身也包含访问凭据。
 
 Resin 固定为 `1.2.0` 并锁定镜像摘要。当前 Nodes 镜像为
-`nodes:public-captcha-36ad331fdd10-20261008045249`，运行代码对应提交 `36ad331`。
+`nodes:public-thresholds-2dc4ac463d1d-20261008094330`，运行代码对应提交 `2dc4ac4`。
 更新时构建新的时间戳标签，将 `deploy/compose.public.yml` 的 dashboard image 改为该标签，
 确认没有活动注册任务后仅重新部署 dashboard：
 
@@ -126,7 +148,7 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 初次初始化（幂等，拒绝覆盖不完整的已有配置）：
 
 ```bash
-docker run --rm --network none --entrypoint python -v /opt/nodes:/deployment nodes:public-captcha-36ad331fdd10-20261008045249 /deployment/deploy/initialize.py --root /deployment --domain ps.gudong226.com
+docker run --rm --network none --entrypoint python -v /opt/nodes:/deployment nodes:public-thresholds-2dc4ac463d1d-20261008094330 /deployment/deploy/initialize.py --root /deployment --domain ps.gudong226.com
 docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml exec -T dashboard python deploy/configure_resin.py
 ```
 
