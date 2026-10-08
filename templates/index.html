@@ -156,7 +156,7 @@
 
         <section class="view" id="view-captcha">
           <section class="panel page-panel">
-            <div class="panel-heading"><div><h2>打码 API</h2><p>Turnstile / 2Captcha 接口，保存后立即同步到注册进程</p></div></div>
+            <div class="panel-heading"><div><h2>打码 API</h2><p>Turnstile 验证服务，保存后立即同步到注册进程</p></div></div>
             <form id="captchaSettingsForm" class="settings-form">
               <div class="form-grid">
                 <label><span>打码方式</span>
@@ -175,7 +175,7 @@
               <label><span>打码 API Key</span><input id="captcha_api_key" placeholder="CapMonster / YesCaptcha / 2Captcha client key"></label>
               <div class="settings-actions">
                 <button class="primary-button settings-save" type="submit">保存打码设置</button>
-                <p class="settings-hint">2Captcha 需要填写 Key。browser 模式走本机 Chromium + turnstile 扩展。</p>
+                <p class="settings-hint">API 模式需填写对应服务商的 Key。browser 模式走本机 Chromium + turnstile 扩展。</p>
               </div>
             </form>
           </section>

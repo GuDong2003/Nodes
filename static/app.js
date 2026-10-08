@@ -5,7 +5,7 @@ const titles = {
   dashboard: ['仪表盘', '注册任务与资源状态'],
   accounts: ['账号管理', '导入删除账号，同步过期时间和剩余流量'],
   mail: ['邮箱服务', 'Cloudflare Temp Email / 云芯 / YYDS 接口，保存后同步到注册进程'],
-  captcha: ['打码接口', '2Captcha / 浏览器打码，保存后同步到注册进程'],
+  captcha: ['打码接口', '2Captcha / YesCaptcha / CapMonster / 浏览器打码'],
   proxies: ['代理输出', '出口代理设置与导出文件'],
   rules: ['质量规则', '保存、启用规则与小样本试测'],
   inventory: ['节点库存', '节点质量、检查进度与历史记录'],

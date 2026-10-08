@@ -1,6 +1,6 @@
 # Nodes
 
-ProxyScrape 注册与代理导出工具。Turnstile token 可通过 2Captcha API 或本地浏览器获取，邮箱创建、注册、收信、验证、免费 Premium DC trial 领取与代理列表获取均通过 HTTP 完成。
+ProxyScrape 注册与代理导出工具。Turnstile token 可通过 2Captcha、YesCaptcha、CapMonster Cloud API 或本地浏览器获取，邮箱创建、注册、收信、验证、免费 Premium DC trial 领取与代理列表获取均通过 HTTP 完成。
 
 项目同时提供受登录保护的 Web 控制台，可在浏览器中启动单个/批量任务、
 查看实时进度、账号状态、任务日志并下载账号或代理文件。
@@ -87,8 +87,8 @@ cp config.local.json.example config.local.json
 | `mail_domain` | 否 | 仅用于 `cf` 自有域名，不要填写 mail.com 后缀 |
 | `yyds_api_key` | yyds 必需 | YYDS Mail API Key |
 | `yyds_domain` | 否 | 已在 YYDS 验证的自有域名 |
-| `captcha_provider` | 否 | `2captcha` 使用远程打码；`browser` 保留原浏览器扩展方案 |
-| `captcha_api_key` | 2captcha 必需 | 2Captcha API Key，只保存在本地配置中 |
+| `captcha_provider` | 否 | API 服务可选 `2captcha`、`yescaptcha`、`capmonster`；`browser` 使用浏览器扩展 |
+| `captcha_api_key` | API 模式必需 | 对应验证码服务商的 API Key，只保存在本地配置中 |
 | `captcha_api_base` | 否 | 默认 `https://api.2captcha.com` |
 | `captcha_timeout` | 否 | 单个 Turnstile 任务超时秒数，默认 180 |
 | `captcha_poll_interval` | 否 | 查询结果间隔秒数，最小 5 秒 |
@@ -161,8 +161,8 @@ Docker 部署通过 `NODES_RESIN_PROXY_URL=http://resin:8970` 指定内部网关
 | `MAIL_DOMAIN` | 否 | CF 自有域名 |
 | `YYDS_API_KEY` | yyds 必需 | YYDS Mail API Key |
 | `YYDS_DOMAIN` | 否 | 已验证的自有域名；留空则由 YYDS 选择 |
-| `CAPTCHA_PROVIDER` | 否 | `2captcha` 或 `browser` |
-| `CAPTCHA_API_KEY` | 2captcha 必需 | 2Captcha API Key |
+| `CAPTCHA_PROVIDER` | 否 | `2captcha`、`yescaptcha`、`capmonster` 或 `browser` |
+| `CAPTCHA_API_KEY` | API 模式必需 | 对应验证码服务商的 API Key |
 | `CAPTCHA_API_BASE` | 否 | 2Captcha API 根地址 |
 | `CAPTCHA_TIMEOUT` | 否 | 单任务超时秒数 |
 | `CAPTCHA_POLL_INTERVAL` | 否 | 查询结果间隔秒数，最小 5 秒 |
@@ -260,3 +260,26 @@ git grep -n -I -E "API_KEY|access_token|refresh_token|proxy_password"
 - 新的合格订阅 `/nodes/api/export/qualified-proxies?token=...` 在质检开启时只输出当前规则下缓存有效的合格节点，关闭时输出全部有效节点。原始订阅和 Resin 网关导出保持原有行为。
 
 完整部署说明见 [deploy/PUBLIC_VPS.md](deploy/PUBLIC_VPS.md)。
+
+
+## 2026-10-08 验证码服务增量同步
+
+选择性接入上游 2026-10-05 的 `8ea90ee`（YesCaptcha）、`5d69706`（CapMonster Cloud）、
+`3ad0b66`（前端自动填写 API 地址）和 `760a37e`（后端纠正服务商地址），每个移植提交保留上游来源。
+保留本地 cfmail、全量节点导出、Resin、任务诊断和质检实现，以及示例配置原有的 2Captcha 默认值。
+此前的质检集成和本次同步均为选择性移植，不能将 Git 的 ahead/behind 数量直接理解为功能缺失数量。
+
+| `captcha_provider` | `captcha_api_base` |
+|---|---|
+| `2captcha` | `https://api.2captcha.com` |
+| `yescaptcha` | `https://api.yescaptcha.com` |
+| `capmonster` | `https://api.capmonster.cloud` |
+| `browser` | 不使用 API 地址 |
+
+Web 控制台切换服务商时会自动填写对应地址；保存时会纠正旧页面提交的其他服务商官方地址，
+自定义兼容地址仍可保留。API Key 需填写当前服务商的 Key，不会自动转换。
+直接编辑配置文件或使用环境变量时，应同时设置服务商、API 地址和 Key。
+
+新增配置回归检查可运行 `python -m unittest -q test_captcha_settings` 和
+`node --test tests/captcha-settings.test.cjs`，均使用临时配置及模拟响应，不进行实际注册或付费打码。
+此处记录源码同步；线上部署与远端推送需单独执行。
