@@ -295,4 +295,5 @@ node --test tests/captcha-settings.test.cjs
 ```
 
 以上命令使用临时目录及模拟响应，不进行实际注册或付费打码。
-此处记录源码同步；线上部署与远端推送需单独执行。
+2026-10-08 已推送至 [个人 fork](https://github.com/GuDong2003/Nodes) 并部署到现有服务，
+发布验证与回滚位置见 [公网部署说明](deploy/PUBLIC_VPS.md)。

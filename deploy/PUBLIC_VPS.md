@@ -81,6 +81,24 @@ PYTHONDONTWRITEBYTECODE=1 NODES_DISABLE_POOL_LOOP=1 uv run --isolated --no-proje
 node --test tests/quality-ui.test.cjs
 ```
 
+### 2026-10-08 验证码服务增量发布
+
+已将上游的 YesCaptcha、CapMonster Cloud、前端 API 地址自动填写和后端地址校正接入现有部署。
+运行代码为 `36ad331`，已推送至 [个人 fork](https://github.com/GuDong2003/Nodes)；
+本地 `origin` 指向个人 fork，`upstream` 指向 `lichao199208/Nodes`。
+
+发布镜像内 145 项 Python 测试在禁网容器中通过，本地 20 项 JS 测试通过；
+实际 Chromium/Xvfb 启动、公网桌面/手机界面、服务商切换地址、登录/CSRF、
+质检/库存及各类订阅导出均验证通过。仍为 4 个账号、400 条有效节点，
+Resin 订阅保持 400 条；验证码方式保留为 `browser`，质检和自动注册仍关闭。
+配置、访问凭据和 Resin 配置文件的哈希保持不变，未执行实际注册或付费打码。
+
+本次回滚备份位于 `/opt/nodes/backups/pre-captcha-20261008045721`（目录 `0700`，归档 `0600`），
+包含源码、运行数据、Compose 和旧镜像引用。上一镜像 `nodes:public-quality-0d574d217176` 保留。
+需要回滚时，将当前 Compose 的 dashboard image 恢复为该旧标签，并仅重建 dashboard；
+备份中的 Compose 供对照，避免覆盖之后新增的配置。此次发布仅重建 Nodes 面板，
+Resin 与 Caddy 的启动时间保持不变。
+
 在 VPS `/opt/nodes` 下执行：
 
 ```bash
@@ -92,7 +110,7 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 不要把未脱敏的日志贴出；订阅 URL 自身也包含访问凭据。
 
 Resin 固定为 `1.2.0` 并锁定镜像摘要。当前 Nodes 镜像为
-`nodes:public-quality-0d574d217176`，运行代码对应提交 `0d574d2`。
+`nodes:public-captcha-36ad331fdd10-20261008045249`，运行代码对应提交 `36ad331`。
 更新时构建新的时间戳标签，将 `deploy/compose.public.yml` 的 dashboard image 改为该标签，
 确认没有活动注册任务后仅重新部署 dashboard：
 
@@ -106,7 +124,7 @@ docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.
 初次初始化（幂等，拒绝覆盖不完整的已有配置）：
 
 ```bash
-docker run --rm --network none --entrypoint python -v /opt/nodes:/deployment nodes:public-quality-0d574d217176 /deployment/deploy/initialize.py --root /deployment --domain ps.gudong226.com
+docker run --rm --network none --entrypoint python -v /opt/nodes:/deployment nodes:public-captcha-36ad331fdd10-20261008045249 /deployment/deploy/initialize.py --root /deployment --domain ps.gudong226.com
 docker compose --project-directory /opt/nodes -p nodes -f deploy/compose.public.yml exec -T dashboard python deploy/configure_resin.py
 ```
 
