@@ -280,6 +280,19 @@ Web 控制台切换服务商时会自动填写对应地址；保存时会纠正�
 自定义兼容地址仍可保留。API Key 需填写当前服务商的 Key，不会自动转换。
 直接编辑配置文件或使用环境变量时，应同时设置服务商、API 地址和 Key。
 
-新增配置回归检查可运行 `python -m unittest -q test_captcha_settings` 和
-`node --test tests/captcha-settings.test.cjs`，均使用临时配置及模拟响应，不进行实际注册或付费打码。
+安装 Python 依赖后，从仓库根目录运行新增回归检查。导入 Web 应用时会读取任务状态，
+因此必须先隔离配置和运行数据目录：
+
+```bash
+nodes_test_dir=$(mktemp -d)
+PYTHONDONTWRITEBYTECODE=1 NODES_DISABLE_POOL_LOOP=1 \
+  NODES_CONFIG_FILE="$nodes_test_dir/config.local.json" \
+  NODES_ACCOUNT_DIR="$nodes_test_dir/account" \
+  NODES_NODE_DIR="$nodes_test_dir/node" \
+  NODES_WEB_DATA_DIR="$nodes_test_dir/web-data" \
+  python -m unittest -q test_captcha_settings
+node --test tests/captcha-settings.test.cjs
+```
+
+以上命令使用临时目录及模拟响应，不进行实际注册或付费打码。
 此处记录源码同步；线上部署与远端推送需单独执行。
