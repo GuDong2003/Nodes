@@ -39,9 +39,12 @@ async function api(path, options = {}) {
 
 function formatDate(value) {
   if (!value) return '—';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '未知';
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).format(new Date(value));
+    timeZone: 'Asia/Shanghai', hourCycle: 'h23',
+  }).format(date);
 }
 
 function statusLabel(status) {
@@ -58,10 +61,6 @@ function renderPool(pool) {
   const live = pool.live_slots || 0;
   const accounts = pool.live_accounts || 0;
   const slots = `${live} 条（${accounts} 个账号）`;
-  document.getElementById('poolAccounts').textContent = accounts || '—';
-  document.getElementById('poolSlots').textContent = slots;
-  document.getElementById('poolNeeded').textContent = pool.needed_accounts ?? 0;
-  document.getElementById('poolAuto').textContent = pool.auto_register ? '开' : '关';
   document.getElementById('poolResinUrl').value = pool.subscription_url || '';
   document.getElementById('poolGptSample').value = pool.gpt_gateway_sample || '';
   document.getElementById('metricProxiesNote').textContent = `Resin 订阅 ${slots}`;
@@ -105,6 +104,9 @@ const taskDialog = window.NodesTaskDialog.create({
 const quality = window.NodesQuality.create({
   document, state, api, toast, escapeHtml, formatDate,
 });
+const poolAutomation = window.NodesPoolAutomation.create({
+  document, state, api, toast, formatBytes, formatDate,
+});
 
 function showView(view) {
   state.currentView = view;
@@ -119,6 +121,7 @@ function showView(view) {
   if (view === 'proxies') loadExports();
   if (view === 'tasks') loadTasks();
   quality.onShow(view);
+  poolAutomation.onShow(view);
 }
 
 function renderTasks(tasks, target, compact = false) {
@@ -185,13 +188,38 @@ function formatBytes(value) {
   return `${amount} B`;
 }
 
+function accountExpiryTime(account) {
+  const value = account.expires_at;
+  if (typeof value !== 'string' || !/T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return NaN;
+  return new Date(value).getTime();
+}
+
 function formatExpiry(account) {
-  if (account.expired) return '已过期';
-  if (!account.expires_at) return '—';
+  const expiresAt = accountExpiryTime(account);
+  if (!Number.isFinite(expiresAt)) return '未知';
   const date = new Intl.DateTimeFormat('zh-CN', {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).format(new Date(account.expires_at));
-  return account.days_remaining != null ? `${date} · ${account.days_remaining}天` : date;
+    timeZone: 'Asia/Shanghai', hourCycle: 'h23',
+  }).format(new Date(expiresAt));
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) return `${date} · 已过期`;
+  const totalHours = Math.floor(remaining / 3600000);
+  if (totalHours < 1) return `${date} · 剩余不足 1 小时`;
+  const days = Math.floor(totalHours / 24);
+  const duration = days ? `${days} 天 ${totalHours % 24} 小时` : `${totalHours} 小时`;
+  return `${date} · 剩余 ${duration}`;
+}
+
+function isAccountExpired(account) {
+  return accountExpiryTime(account) <= Date.now();
+}
+
+function refreshAccountExpiries() {
+  document.querySelectorAll('#view-accounts.active [data-expires-at], #accountDialog[open] [data-expires-at]').forEach(element => {
+    const account = { expires_at: element.dataset.expiresAt };
+    element.textContent = formatExpiry(account);
+    element.classList.toggle('is-expired', isAccountExpired(account));
+  });
 }
 
 function selectedAccountEmails() {
@@ -214,7 +242,7 @@ async function loadAccounts() {
         <td class="check-col"><input type="checkbox" class="account-select" value="${escapeHtml(account.email)}"></td>
         <td title="${escapeHtml(account.email)}">${escapeHtml(account.email)}</td>
         <td>${account.verified ? statusChip('success') : statusChip('failed')}</td>
-        <td class="${account.expired ? 'is-expired' : ''}">${escapeHtml(formatExpiry(account))}</td>
+        <td data-expires-at="${escapeHtml(account.expires_at || '')}" class="${isAccountExpired(account) ? 'is-expired' : ''}">${escapeHtml(formatExpiry(account))}</td>
         <td title="${escapeHtml(formatBytes(account.bandwidth_used))} / ${escapeHtml(formatBytes(account.bandwidth_total))}">${escapeHtml(formatBytes(account.bandwidth_remaining))}</td>
         <td>${account.proxy_count}</td>
         <td>${account.has_api_key ? '<span class="status-chip success">已保存</span>' : '<span class="status-chip queued">未创建</span>'}</td>
@@ -284,7 +312,7 @@ function fillAccount(account) {
   document.getElementById('accountDialogEmail').textContent = account.email || '';
   document.getElementById('accountDialogStats').innerHTML = `
     <div><span>验证</span><strong>${account.verified ? '已验证' : '未验证'}</strong></div>
-    <div><span>到期</span><strong class="${account.expired ? 'is-expired' : ''}">${escapeHtml(formatExpiry(account))}</strong></div>
+    <div><span>到期（北京时间）</span><strong data-expires-at="${escapeHtml(account.expires_at || '')}" class="${isAccountExpired(account) ? 'is-expired' : ''}">${escapeHtml(formatExpiry(account))}</strong></div>
     <div><span>剩余流量</span><strong>${escapeHtml(formatBytes(account.bandwidth_remaining))}</strong></div>
     <div><span>已用 / 总量</span><strong>${escapeHtml(formatBytes(account.bandwidth_used))} / ${escapeHtml(formatBytes(account.bandwidth_total))}</strong></div>`;
   setField('acc_email', account.email);
@@ -656,22 +684,6 @@ document.getElementById('proxySettingsForm').addEventListener('submit', event =>
   saveSettings(event, [...settingFields.proxy, 'proxy_enabled', 'proxy_use_pool'], '代理设置已同步');
 });
 document.getElementById('proxy_use_pool').addEventListener('change', updateProxyMode);
-document.getElementById('ensureCapacityButton').addEventListener('click', async () => {
-  const button = document.getElementById('ensureCapacityButton');
-  button.disabled = true;
-  try {
-    const data = await api('/api/pool/ensure-capacity', { method: 'POST', body: JSON.stringify({ auto_register: true }) });
-    renderPool(data.pool);
-    if (data.task?.id) toast(`已启动补号任务 ${data.task.id}`);
-    else if ((data.pool?.shortage_slots || 0) <= 0) toast('槽位已够，不用补号');
-    else toast(data.pool?.active_task ? '已有注册任务在跑' : '未启动新任务');
-    refreshDashboard();
-  } catch (error) {
-    toast(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-});
 document.querySelectorAll('[data-copy]').forEach(button => {
   button.addEventListener('click', () => copyField(button.dataset.copy).catch(error => toast(error.message, true)));
 });
@@ -683,11 +695,14 @@ document.getElementById('downloadGatewayButton')?.addEventListener('click', () =
 document.getElementById('proxyFileFormat')?.addEventListener('change', updateProxyFileLinks);
 
 refreshDashboard();
+poolAutomation.refresh();
 loadExports();
 loadSettings();
 setInterval(() => {
+  refreshAccountExpiries();
   refreshDashboard();
   if (state.currentView === 'tasks') loadTasks();
   taskDialog.refresh();
   quality.refresh();
+  poolAutomation.refresh();
 }, 4000);

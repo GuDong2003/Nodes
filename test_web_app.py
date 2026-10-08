@@ -517,11 +517,13 @@ class PoolExportTests(unittest.TestCase):
             session["authenticated"] = True
             session["username"] = target.WEB_USERNAME
             session["csrf_token"] = "test-csrf"
-        response = self.client.post(
-            "/api/pool/ensure-capacity",
-            json={"auto_register": True},
-            headers={"X-CSRF-Token": "test-csrf"},
-        )
+        with patch.object(target, "_read_config", return_value={"pool_auto_register": True}), \
+             patch.dict(os.environ, NODES_DISABLE_POOL_LOOP="0"):
+            response = self.client.post(
+                "/api/pool/ensure-capacity",
+                json={"auto_register": True},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
         self.assertEqual(response.status_code, 200)
         start.assert_called_once_with(1, 1)
         self.assertEqual(response.json["task"]["id"], "task-fill")

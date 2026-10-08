@@ -3,6 +3,7 @@
 
 import hmac
 import json
+import math
 import os
 import secrets
 import threading
@@ -30,6 +31,7 @@ from werkzeug.security import check_password_hash
 import requests
 
 import pool
+import pool_automation
 import platform_store
 import proxyscrape_register as worker
 import proxy_quality
@@ -43,6 +45,8 @@ WEB_DATA_DIR = Path(os.environ.get("NODES_WEB_DATA_DIR", BASE_DIR / "web-data"))
 CONFIG_FILE = Path(os.environ.get("NODES_CONFIG_FILE", BASE_DIR / "config.local.json"))
 TASKS_FILE = WEB_DATA_DIR / "tasks.json"
 _CONFIG_LOCK = threading.RLock()
+_ACCOUNT_LOCK = threading.RLock()
+_ACCOUNT_SYNC_LOCK = threading.Lock()
 _QUALITY_CHECK_LOCK = threading.Lock()
 _QUALITY_CHECK = {"running": False, "completed": 0, "total": 0, "error": None}
 
@@ -64,6 +68,14 @@ def _config_write(function):
     @wraps(function)
     def serialized(*args, **kwargs):
         with _CONFIG_LOCK:
+            return function(*args, **kwargs)
+    return serialized
+
+
+def _account_locked(function):
+    @wraps(function)
+    def serialized(*args, **kwargs):
+        with _ACCOUNT_LOCK:
             return function(*args, **kwargs)
     return serialized
 
@@ -602,16 +614,11 @@ def _socks5_gateway_body(settings, live_slots):
 
 
 def _maybe_fill_capacity(auto_register=True):
-    settings, _entries, cap = _pool_snapshot()
-    started = None
-    if auto_register and settings["auto_register"] and cap["needed_accounts"] > 0 and not TASK_STORE.active():
-        count = min(int(settings["max_register_per_round"]), int(cap["needed_accounts"]))
-        started = TASK_STORE.start_task(count, 1)
-        cap["register_started"] = started.get("id") if started else None
-        cap["register_count"] = count
-    else:
-        cap["register_started"] = None
-        cap["register_count"] = 0
+    result = POOL_AUTOMATION.check(allow_registration=auto_register)
+    _settings, _entries, cap = _pool_snapshot()
+    started = result["task"]
+    cap["register_started"] = started.get("id") if started else None
+    cap["register_count"] = started.get("requested", 0) if started else 0
     cap["active_task"] = (TASK_STORE.active() or {}).get("id")
     return cap, started
 
@@ -628,9 +635,8 @@ def _start_pool_loop():
     def _loop():
         while True:
             try:
-                settings = pool.pool_settings(_read_config())
-                time.sleep(int(settings["loop_seconds"]))
-                _maybe_fill_capacity(auto_register=True)
+                time.sleep(1)
+                POOL_AUTOMATION.poll()
             except Exception:
                 time.sleep(30)
 
@@ -1055,6 +1061,7 @@ def _record_stamp(record):
     return 0
 
 
+@_account_locked
 def _account_records():
     deleted = _load_deleted_emails()
     latest = {}
@@ -1196,20 +1203,15 @@ def _usage_fields(record):
         remaining = int(remaining) if remaining is not None else None
     except (TypeError, ValueError):
         remaining = None
-    days = record.get("days_remaining")
-    if days is None:
-        days = summary.get("days_remaining")
-    if days is None and expiry:
-        days = max(0, int((expiry - time.time()) // 86400))
-    try:
-        days = int(days) if days is not None else None
-    except (TypeError, ValueError):
-        days = None
+    now = time.time()
+    remaining_seconds = max(0, int(expiry - now)) if expiry else None
+    days = remaining_seconds // 86400 if remaining_seconds is not None else None
     return {
         "expires_at": _iso_from_unix(expiry),
         "expiry": expiry,
         "days_remaining": days,
-        "expired": bool(expiry and expiry <= time.time()),
+        "remaining_seconds": remaining_seconds,
+        "expired": bool(expiry and expiry <= now),
         "bandwidth_total": total,
         "bandwidth_used": used if used is not None else (0 if total is not None else None),
         "bandwidth_remaining": remaining,
@@ -1290,6 +1292,7 @@ def _pool_public():
     }
 
 
+@_account_locked
 def _save_account_record(record):
     email = str(record.get("email") or "").strip().lower()
     if email:
@@ -1315,6 +1318,7 @@ def _normalize_email_list(values):
     return result
 
 
+@_account_locked
 def _delete_accounts(emails):
     wanted = {item.lower() for item in _normalize_email_list(emails)}
     if not wanted:
@@ -1384,6 +1388,7 @@ def _normalize_imported_record(raw):
     return record
 
 
+@_account_locked
 def _import_accounts(items):
     if not isinstance(items, list) or not items:
         raise ValueError("没有可导入的账号")
@@ -1481,8 +1486,9 @@ def _refresh_account_remote(record, create_key=False, permissions=None):
         summary = worker.fetch_accounts_summary(client, access_token)
         next_record["account_summary"] = next(
             (item for item in summary if item.get("id") == account_id),
-            summary[0] if summary else None,
+            None,
         )
+        next_record.pop("account_summary_error", None)
     except Exception as error:
         next_record["account_summary_error"] = str(error)[:240]
     summary = next_record.get("account_summary") if isinstance(next_record.get("account_summary"), dict) else {}
@@ -1495,9 +1501,10 @@ def _refresh_account_remote(record, create_key=False, permissions=None):
     next_record["usage_synced_at"] = int(time.time())
     try:
         plist = worker.list_proxy_hosts(access_token, account_id)
-        if plist:
-            next_record["proxy_ips"] = plist
-            next_record["proxy_count"] = len(plist)
+        next_record["proxy_ips"] = plist
+        next_record["proxy_count"] = len(plist)
+        next_record["proxy_list_synced_at"] = int(time.time())
+        next_record.pop("proxy_list_error", None)
     except Exception as error:
         next_record["proxy_list_error"] = str(error)[:240]
     if create_key:
@@ -1514,6 +1521,128 @@ def _refresh_account_remote(record, create_key=False, permissions=None):
         )
     next_record["updated_at"] = int(time.time())
     return next_record
+
+
+@_account_locked
+def _commit_synced_record(original, updated):
+    latest = _find_account(original.get("email"))
+    if latest is None:
+        return None
+    if any(latest.get(key) != original.get(key) for key in ("access_token", "account_id")):
+        raise RuntimeError("账号凭据已变更，请重新同步")
+    merged = dict(latest)
+    # Network requests happen outside the record lock. Apply only changed
+    # remote fields, retaining edits made while the upstream was responding.
+    for key, value in updated.items():
+        if (key not in original or value != original.get(key)) and latest.get(key) == original.get(key):
+            merged[key] = value
+    for key in ("account_summary_error", "proxy_list_error"):
+        if key in original and key not in updated and latest.get(key) == original.get(key):
+            merged.pop(key, None)
+    return _save_account_record(merged)
+
+
+def _sync_usage_records(emails=None):
+    if not _ACCOUNT_SYNC_LOCK.acquire(blocking=False):
+        raise RuntimeError("已有账号同步正在运行")
+    try:
+        wanted = {email.lower() for email in (emails or [])}
+        records = [record for record in _account_records()
+                   if not wanted or str(record.get("email") or "").lower() in wanted]
+        synced, failed = [], []
+        blocking_failed = 0
+        for record in records:
+            email = record.get("email") or ""
+            try:
+                updated = _refresh_account_remote(record, create_key=False)
+                saved = _commit_synced_record(record, updated)
+                if saved is None:
+                    continue  # Deleted during synchronization; never restore it.
+                synced.append(email)
+                if saved.get("proxy_list_error"):
+                    raise RuntimeError("节点列表同步失败，保留上次节点数据")
+            except Exception as error:
+                failed.append({"email": email, "error": _safe_error(error)})
+                current = _find_account(email)
+                if current and pool.account_is_live(current, time.time(), 0):
+                    blocking_failed += 1
+        return {"synced": synced, "failed": failed, "blocking_failed": blocking_failed}
+    finally:
+        _ACCOUNT_SYNC_LOCK.release()
+
+
+def _automation_settings():
+    settings = pool.pool_settings(_read_config())
+    if os.environ.get("NODES_DISABLE_POOL_LOOP") == "1":
+        settings["auto_register"] = False
+    return settings
+
+
+POOL_AUTOMATION = pool_automation.Automation(
+    state_file=lambda: WEB_DATA_DIR / "pool_automation.json",
+    settings=_automation_settings, synchronize=lambda: _sync_usage_records(),
+    snapshot=lambda: _pool_snapshot()[2], active=lambda: TASK_STORE.active(),
+    start_task=lambda count, concurrency: TASK_STORE.start_task(count, concurrency),
+    config_lock=_CONFIG_LOCK,
+)
+
+
+def _automation_public():
+    settings, _entries, capacity = _pool_snapshot()
+    status = POOL_AUTOMATION.status()
+    status["worker_enabled"] = os.environ.get("NODES_DISABLE_POOL_LOOP") != "1"
+    return {"ok": True, "settings": {
+        "enabled": settings["auto_register"], "target_nodes": settings["target_slots"],
+        "target_bandwidth_gb": settings["target_bandwidth"] / 1_000_000_000,
+        "interval_minutes": max(1, settings["loop_seconds"] // 60),
+        "max_register_per_round": settings["max_register_per_round"],
+    }, "capacity": capacity, "status": status}
+
+
+@app.get("/api/pool/automation")
+def get_pool_automation():
+    return jsonify(_automation_public())
+
+
+@app.put("/api/pool/automation")
+def save_pool_automation():
+    payload = request.get_json(silent=True)
+    with _CONFIG_LOCK:
+        settings = _automation_public()["settings"]
+        if not isinstance(payload, dict) or not payload or set(payload) - set(settings):
+            return jsonify({"error": "请提供有效的补池设置"}), 400
+        settings.update(payload)
+        if type(settings["enabled"]) is not bool:
+            return jsonify({"error": "自动补号开关必须为布尔值"}), 400
+        for key, minimum, maximum in (("target_nodes", 0, 100000), ("interval_minutes", 1, 1440),
+                                      ("max_register_per_round", 1, 5)):
+            if type(settings[key]) is not int or not minimum <= settings[key] <= maximum:
+                return jsonify({"error": f"{key} 必须是 {minimum}-{maximum} 的整数"}), 400
+        gb = settings["target_bandwidth_gb"]
+        if type(gb) not in (int, float) or not math.isfinite(gb) or not 0 <= gb <= 100000:
+            return jsonify({"error": "目标流量必须为 0-100000 GB 的数字"}), 400
+        if settings["enabled"] and not (settings["target_nodes"] or gb):
+            return jsonify({"error": "请至少设置一个大于零的阈值"}), 400
+        if settings["enabled"] and os.environ.get("NODES_DISABLE_POOL_LOOP") == "1":
+            return jsonify({"error": "运行环境已停用后台检查，无法启用自动补号"}), 409
+        config = _read_config()
+        config.update(pool_auto_register=settings["enabled"], pool_target_slots=settings["target_nodes"],
+                      pool_target_bandwidth_gb=gb, pool_loop_seconds=settings["interval_minutes"] * 60,
+                      pool_max_register_per_round=settings["max_register_per_round"])
+        _atomic_json(CONFIG_FILE, config)
+        POOL_AUTOMATION.configure()
+    return jsonify(_automation_public())
+
+
+@app.post("/api/pool/automation/check")
+def check_pool_automation():
+    if _ACCOUNT_SYNC_LOCK.locked():
+        return jsonify({"error": "已有账号同步正在运行"}), 409
+    try:
+        POOL_AUTOMATION.start()
+    except RuntimeError as error:
+        return jsonify({"error": str(error)}), 409
+    return jsonify(_automation_public()), 202
 
 
 @app.get("/api/dashboard")
@@ -1590,27 +1719,14 @@ def delete_accounts():
 def sync_accounts_usage():
     payload = request.get_json(silent=True) or {}
     emails = _normalize_email_list(payload.get("emails") or [])
-    records = _account_records()
-    if emails:
-        wanted = {item.lower() for item in emails}
-        records = [item for item in records if str(item.get("email") or "").lower() in wanted]
-    synced = []
-    failed = []
-    for record in records:
-        email = record.get("email") or ""
-        if not record.get("access_token") or not record.get("account_id"):
-            failed.append({"email": email, "error": "缺少 access_token 或 account_id"})
-            continue
-        try:
-            updated = _refresh_account_remote(record, create_key=False)
-            _save_account_record(updated)
-            synced.append(email)
-        except Exception as error:
-            failed.append({"email": email, "error": _safe_error(error)})
+    try:
+        result = _sync_usage_records(emails)
+    except RuntimeError as error:
+        return jsonify({"error": str(error)}), 409
     return jsonify({
         "ok": True,
-        "synced": synced,
-        "failed": failed,
+        "synced": result["synced"],
+        "failed": result["failed"],
         "accounts": _public_accounts(_account_records())[:500],
     })
 
@@ -1635,6 +1751,7 @@ def delete_account(email):
 
 
 @app.put("/api/accounts/<path:email>")
+@_account_locked
 def update_account(email):
     record = _find_account(email)
     if not record:
@@ -1653,13 +1770,19 @@ def refresh_account(email):
     record = _find_account(email)
     if not record:
         abort(404)
+    if not _ACCOUNT_SYNC_LOCK.acquire(blocking=False):
+        return jsonify({"error": "已有账号同步正在运行"}), 409
     try:
-        next_record = _refresh_account_remote(record, create_key=False)
+        updated = _refresh_account_remote(record, create_key=False)
+        next_record = _commit_synced_record(record, updated)
     except RuntimeError as error:
         return jsonify({"error": str(error)}), 409
     except Exception as error:
         return jsonify({"error": _safe_error(error)}), 502
-    _save_account_record(next_record)
+    finally:
+        _ACCOUNT_SYNC_LOCK.release()
+    if next_record is None:
+        abort(404)
     return jsonify({"ok": True, "account": _serialize_account(next_record, full=True)})
 
 
@@ -1669,17 +1792,23 @@ def sync_account_api_key(email):
     if not record:
         abort(404)
     payload = request.get_json(silent=True) or {}
+    if not _ACCOUNT_SYNC_LOCK.acquire(blocking=False):
+        return jsonify({"error": "已有账号同步正在运行"}), 409
     try:
         staged = _apply_account_update(record, payload)
         permissions = staged.get("api_key", {}).get("permissions") if isinstance(staged.get("api_key"), dict) else None
-        next_record = _refresh_account_remote(staged, create_key=True, permissions=permissions)
+        updated = _refresh_account_remote(staged, create_key=True, permissions=permissions)
+        next_record = _commit_synced_record(record, updated)
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
     except RuntimeError as error:
         return jsonify({"error": str(error)}), 409
     except Exception as error:
         return jsonify({"error": _safe_error(error)}), 502
-    _save_account_record(next_record)
+    finally:
+        _ACCOUNT_SYNC_LOCK.release()
+    if next_record is None:
+        abort(404)
     return jsonify({"ok": True, "account": _serialize_account(next_record, full=True)})
 
 

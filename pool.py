@@ -2,6 +2,7 @@
 """Live proxy pool: export all distinct hosts of each eligible account."""
 
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -13,7 +14,7 @@ DEFAULT_TARGET_SLOTS = 80
 DEFAULT_EXPECTED_PROXIES_PER_ACCOUNT = 100
 DEFAULT_MIN_BANDWIDTH = 100 * 1024 * 1024
 DEFAULT_MAX_REGISTER = 5
-DEFAULT_LOOP_SECONDS = 120
+DEFAULT_LOOP_SECONDS = 1800
 DEFAULT_GATEWAY_HOST = "127.0.0.1"
 DEFAULT_GATEWAY_PORT = 8970
 DEFAULT_PLATFORM = "Nodes"
@@ -42,13 +43,19 @@ def pool_settings(config):
     # Replenishment estimate only, never a limit on the exported hosts.
     # The old pool_slots_per_account sampling setting is deliberately ignored.
     expected = max(1, _as_int(data.get("pool_expected_proxies_per_account"), DEFAULT_EXPECTED_PROXIES_PER_ACCOUNT))
-    target = max(1, min(800, _as_int(data.get("pool_target_slots"), DEFAULT_TARGET_SLOTS)))
+    target = max(0, min(100000, _as_int(data.get("pool_target_slots"), DEFAULT_TARGET_SLOTS)))
+    try:
+        target_gb = float(data.get("pool_target_bandwidth_gb") or 0)
+        target_bandwidth = int(max(0, min(100000, target_gb)) * 1_000_000_000) if math.isfinite(target_gb) else 0
+    except (TypeError, ValueError, OverflowError):
+        target_bandwidth = 0
     min_bandwidth = max(0, _as_int(data.get("pool_min_bandwidth"), DEFAULT_MIN_BANDWIDTH))
     max_register = max(1, min(5, _as_int(data.get("pool_max_register_per_round"), DEFAULT_MAX_REGISTER)))
-    loop_seconds = max(30, min(3600, _as_int(data.get("pool_loop_seconds"), DEFAULT_LOOP_SECONDS)))
-    auto_register = True if "pool_auto_register" not in data else _as_bool(data.get("pool_auto_register"))
+    loop_seconds = max(60, min(86400, _as_int(data.get("pool_loop_seconds"), DEFAULT_LOOP_SECONDS)))
+    auto_register = _as_bool(data.get("pool_auto_register", False))
     return {
         "target_slots": target,
+        "target_bandwidth": target_bandwidth,
         "slots_per_account": expected,  # Legacy response alias for the estimate.
         "expected_proxies_per_account": expected,
         "export_all": True,
@@ -142,14 +149,18 @@ def live_entries(records, node_dir, settings, now):
         user = str(record.get("proxy_username") or "").strip()
         password = str(record.get("proxy_password") or "").strip()
         email = str(record.get("email") or "").strip()
-        hosts = normalize_hosts(record.get("proxy_ips")) or harvested.get(user) or []
+        hosts = normalize_hosts(record.get("proxy_ips"))
+        if not hosts and not record.get("proxy_list_synced_at"):
+            hosts = harvested.get(user) or []
         if not hosts:
             continue
         entries.append({
             "email": email,
+            "account_id": str(record.get("account_id") or ""),
             "proxy_username": user,
             "proxy_password": password,
             "slots": hosts,
+            "bandwidth_remaining": record.get("bandwidth_remaining"),
         })
     return entries
 
@@ -160,6 +171,24 @@ def capacity(entries, settings):
     per_account = int(settings["expected_proxies_per_account"])
     shortage = max(0, target - live_slots)
     needed_accounts = (shortage + per_account - 1) // per_account if shortage else 0
+    quotas = {}
+    for index, item in enumerate(entries):
+        identity = item.get("account_id") or item.get("proxy_username") or item.get("email") or index
+        try:
+            remaining = max(0, int(item["bandwidth_remaining"]))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            remaining = None
+        if identity in quotas:
+            previous = quotas[identity]
+            remaining = min(previous, remaining) if previous is not None and remaining is not None else None
+        quotas[identity] = remaining
+    bandwidth_remaining = sum(value for value in quotas.values() if value is not None)
+    target_bandwidth = int(settings.get("target_bandwidth", 0))
+    shortage_bandwidth = max(0, target_bandwidth - bandwidth_remaining)
+    # Traffic per newly registered account is not guaranteed. Add one, then
+    # reassess its actual quota next round instead of assuming a plan size.
+    if shortage_bandwidth:
+        needed_accounts = max(needed_accounts, 1)
     return {
         "live_accounts": len(entries),
         "live_slots": live_slots,
@@ -170,6 +199,10 @@ def capacity(entries, settings):
         "export_all": True,
         "shortage_slots": shortage,
         "needed_accounts": needed_accounts,
+        "bandwidth_remaining": bandwidth_remaining,
+        "target_bandwidth": target_bandwidth,
+        "shortage_bandwidth": shortage_bandwidth,
+        "unknown_bandwidth_accounts": sum(value is None for value in quotas.values()),
         "max_register_per_round": int(settings["max_register_per_round"]),
         "auto_register": bool(settings["auto_register"]),
         "min_bandwidth": int(settings["min_bandwidth"]),

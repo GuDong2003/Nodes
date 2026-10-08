@@ -6,6 +6,7 @@
 !web_app.py
 !wsgi.py
 !pool.py
+!pool_automation.py
 !proxy_quality.py
 !platform_store.py
 !quality_rules.py

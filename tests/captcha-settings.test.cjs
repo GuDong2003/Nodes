@@ -24,7 +24,7 @@ async function fixture(settings) {
     },
   };
   vm.createContext(context);
-  for (const file of ['task-dialog.js', 'quality.js', 'app.js']) {
+  for (const file of ['task-dialog.js', 'quality.js', 'pool-automation.js', 'app.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../static', file), 'utf8'), context);
   }
   await new Promise(resolve => setImmediate(resolve));

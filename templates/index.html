@@ -6,7 +6,7 @@
   <meta name="csrf-token" content="{{ csrf_token }}">
   <meta name="app-base" content="{{ app_base }}">
   <title>Nodes Ops</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=quality1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=pool-automation1">
 </head>
 <body>
   <div class="app-shell">
@@ -88,14 +88,39 @@
 
           <section class="panel pool-panel">
             <div class="panel-heading">
-              <div><h2>Resin / GPT 池</h2><p>全量导出有效账号的代理地址，不再抽样；节点数量不等于套餐并发连接数，连通性以 Resin 检测为准。</p></div>
-              <button class="secondary-button" type="button" id="ensureCapacityButton">补齐容量</button>
+              <div><h2>Resin / GPT 池</h2><p>有效节点数按未过期、未耗尽流量账号的实际导出节点统计；连通性以 Resin 检测为准。</p></div>
+              <button class="secondary-button" type="button" id="ensureCapacityButton" disabled>立即检查</button>
             </div>
             <div class="chain-grid">
               <div><span>有效账号</span><strong id="poolAccounts">—</strong></div>
-              <div><span>导出代理</span><strong id="poolSlots">—</strong></div>
+              <div><span>有效节点</span><strong id="poolSlots">—</strong></div>
+              <div><span>剩余总流量</span><strong id="poolBandwidth">—</strong></div>
               <div><span>缺口账号估算</span><strong id="poolNeeded">—</strong></div>
               <div><span>自动补号</span><strong id="poolAuto">—</strong></div>
+            </div>
+            <p class="settings-hint pool-capacity-hint" id="poolCapacityHint">剩余流量按账号汇总，每个账号只计一次。</p>
+            <form id="poolAutomationForm" class="settings-form pool-automation-form">
+              <label class="check-row"><input id="poolAutomationEnabled" type="checkbox" disabled><span>启用自动补号</span></label>
+              <div class="form-grid pool-automation-fields">
+                <label><span>最低有效节点数</span><input id="poolTargetNodes" type="number" min="0" max="100000" step="1" value="80" required disabled><small>0 表示不检查节点数</small></label>
+                <label><span>最低剩余总流量（GB）</span><input id="poolTargetBandwidth" type="number" min="0" max="100000" step="any" value="0" required disabled><small>0 表示不检查流量</small></label>
+                <label><span>检查间隔（分钟）</span><input id="poolCheckInterval" type="number" min="1" max="1440" step="1" value="30" required disabled></label>
+                <label><span>每轮最多注册账号</span><input id="poolMaxRegistrations" type="number" min="1" max="5" step="1" value="5" required disabled></label>
+              </div>
+              <p class="settings-hint">启用时至少设置一个大于 0 的阈值；同时设置两个阈值时，任一项不足就触发补号。每轮先同步用量，同步失败或容量未知时跳过补号。有效节点数是有效账号的导出数量，不是健康探测通过数。</p>
+              <div class="pool-automation-actions">
+                <button class="primary-button settings-save" id="poolAutomationSave" type="submit" disabled>保存补号设置</button>
+                <p class="settings-hint" id="poolAutomationEditHint">正在读取已保存设置…</p>
+              </div>
+            </form>
+            <div class="pool-automation-status" role="status" aria-live="polite">
+              <p class="pool-automation-message" id="poolAutomationStatus">正在读取补号状态…</p>
+              <p class="settings-hint" id="poolAutomationProgress">—</p>
+              <div class="pool-check-times">
+                <div><span>上次检查（北京时间）</span><strong id="poolAutomationLastCheck">—</strong></div>
+                <div><span>下次检查（北京时间）</span><strong id="poolAutomationNextCheck">—</strong></div>
+              </div>
+              <p class="settings-hint" id="poolAutomationWorker">—</p>
             </div>
             <div class="pool-links">
               <label><span>Resin 订阅（本机）</span><input id="poolResinUrl" readonly><button class="text-button" type="button" data-copy="poolResinUrl">复制</button></label>
@@ -117,9 +142,9 @@
                 <button class="secondary-button" type="button" id="downloadLatestAccounts">下载最新明细</button>
               </div>
             </div>
-            <div class="table-wrap"><table><thead><tr>
+            <div class="table-wrap"><table class="accounts-table"><thead><tr>
               <th class="check-col"><input type="checkbox" id="accountSelectAll" aria-label="全选"></th>
-              <th>邮箱</th><th>验证</th><th>到期</th><th>剩余流量</th><th>代理</th><th>API</th><th></th>
+              <th>邮箱</th><th>验证</th><th>到期（北京时间）</th><th>剩余流量</th><th>代理</th><th>API</th><th></th>
             </tr></thead><tbody id="accountsBody"></tbody></table></div>
           </section>
         </section>
@@ -362,6 +387,7 @@
   <div class="sidebar-scrim" id="sidebarScrim"></div>
   <script src="{{ url_for('static', filename='task-dialog.js') }}?v=task-dialog1" defer></script>
   <script src="{{ url_for('static', filename='quality.js') }}?v=quality1" defer></script>
-  <script src="{{ url_for('static', filename='app.js') }}?v=quality1" defer></script>
+  <script src="{{ url_for('static', filename='pool-automation.js') }}?v=pool-automation1" defer></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=pool-automation1" defer></script>
 </body>
 </html>

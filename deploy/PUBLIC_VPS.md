@@ -37,8 +37,10 @@ API 保留 `live_slots`、`concurrent_slots` 等旧字段名作为节点数量�
 只导入此平台的 `Nodes/` 节点，绝不能把 GPT/Clash 的 Resin 网关订阅反导回 Resin，
 否则会形成循环代理。
 
-自动补号被两层关闭：`pool_auto_register=false` 与 `NODES_DISABLE_POOL_LOOP=1`。
-手动注册也应先确认上游授权及第三方费用。不要未确认就开启后台循环。
+自动补号默认关闭：`pool_auto_register=false`。阈值功能部署后使用 `NODES_DISABLE_POOL_LOOP=0`，
+由仪表盘「Resin / GPT 池」的开关决定是否自动注册；每轮先同步再判断节点/总流量阈值。
+`NODES_DISABLE_POOL_LOOP=1` 仍是环境停用开关，面板会提示后台不可用并拒绝启用自动补号。
+仅保存设置或关闭开关不会启动注册，手动检查在开关关闭时只同步账号。
 「代理输出」提供 `proxy_use_pool` 开关：勾选并保存后，HTTP API 请求自动经过内网
 `http://resin:8970`，凭据从现有服务端配置读取；关闭时恢复原手动代理设置。
 管理/订阅等内网请求自动绕过代理，Chromium 不随开关变更。部署不自动启用此开关。

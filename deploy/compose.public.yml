@@ -15,7 +15,7 @@ services:
       - wsgi:application
     environment:
       NODES_CONFIG_FILE: /app/config/config.local.json
-      NODES_DISABLE_POOL_LOOP: "1"
+      NODES_DISABLE_POOL_LOOP: "0"
       NODES_RESIN_PROXY_URL: http://resin:8970
       TZ: Asia/Shanghai
     ports:
