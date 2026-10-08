@@ -22,6 +22,7 @@ class Automation:
         self.clock = clock or time.time
         self.run_lock = threading.Lock()
         self.state_lock = threading.RLock()
+        self._bootstrapped = False
 
     def _path(self):
         return Path(self.state_file() if callable(self.state_file) else self.state_file)
@@ -80,6 +81,21 @@ class Automation:
     def poll(self):
         if not self.settings()["auto_register"]:
             return None
+        if not self._bootstrapped:
+            if not self.run_lock.acquire(blocking=False):
+                return None
+            try:
+                state = self._read()
+                due = state.get("next_check_at")
+                self._bootstrapped = True
+                if (not isinstance(due, (int, float)) or due <= self.clock()
+                        or state.get("outcome") == "running"):
+                    self.configure()
+                    if state.get("outcome") == "running":
+                        self._update(outcome="error", message="上次检查中断，已安排下一轮检查")
+                    return None
+            finally:
+                self.run_lock.release()
         due = self._read().get("next_check_at")
         if not isinstance(due, (int, float)):
             self.configure()

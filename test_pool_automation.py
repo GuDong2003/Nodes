@@ -1,9 +1,6 @@
 """Threshold accounting and scheduler regressions; remote calls are replaced in tests."""
 
-import json
 import tempfile
-import threading
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch

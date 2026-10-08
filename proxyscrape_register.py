@@ -1348,7 +1348,7 @@ def provision_api_key(session, access_token, account_id, permissions=None, name=
 
 
 # ── 拉取免费 datacenter 代理 ────────────────────────────
-def list_proxy_hosts(access_token, account_id):
+def list_proxy_hosts(access_token, account_id, *, allow_empty=False):
     headers = _auth_headers(access_token)
 
     def _list():
@@ -1360,9 +1360,19 @@ def list_proxy_hosts(access_token, account_id):
         return response.text
 
     text = _retry(_list, tries=3, delay=3, what="proxy-list")
-    proxies = [line.strip() for line in text.split() if ":" in line]
-    if not proxies:
+    proxies = text.split()
+    if not proxies and not allow_empty:
         raise RuntimeError("proxy-list 为空")
+    for endpoint in proxies:
+        try:
+            address = urlsplit("//" + endpoint)
+            valid = (address.hostname and address.port and 1 <= address.port <= 65535
+                     and not address.username and not address.password
+                     and not address.path and not address.query and not address.fragment)
+        except ValueError:
+            valid = False
+        if not valid:
+            raise RuntimeError("proxy-list 格式无效")
     return proxies
 
 

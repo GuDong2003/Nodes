@@ -1500,7 +1500,7 @@ def _refresh_account_remote(record, create_key=False, permissions=None):
         next_record["plan_status"] = summary.get("status")
     next_record["usage_synced_at"] = int(time.time())
     try:
-        plist = worker.list_proxy_hosts(access_token, account_id)
+        plist = worker.list_proxy_hosts(access_token, account_id, allow_empty=True)
         next_record["proxy_ips"] = plist
         next_record["proxy_count"] = len(plist)
         next_record["proxy_list_synced_at"] = int(time.time())

@@ -4,9 +4,11 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import web_app as web
+
+REAL_LIST_PROXY_HOSTS = web.worker.list_proxy_hosts
 
 
 class AutomationApiTests(unittest.TestCase):
@@ -157,6 +159,29 @@ class AutomationApiTests(unittest.TestCase):
             response = self.client.post("/api/accounts/sync-usage", json={}, headers=self.headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(web._pool_snapshot()[2]["live_slots"], 0)
+
+    def test_real_empty_upstream_response_clears_old_nodes(self):
+        self.add_account()
+        (self.root / "node" / "old.txt").write_text("http://user:proxy-secret@old.example.com:80\n")
+        response = Mock(text="", status_code=200)
+        with patch.object(web.worker, "list_proxy_hosts", REAL_LIST_PROXY_HOSTS), \
+             patch.object(web.worker.requests, "get", return_value=response):
+            synced = self.client.post("/api/accounts/sync-usage", json={}, headers=self.headers)
+        self.assertEqual(synced.status_code, 200)
+        self.assertEqual(synced.json["failed"], [])
+        self.assertEqual(web._pool_snapshot()[2]["live_slots"], 0)
+
+    def test_registration_still_rejects_an_empty_upstream_node_list(self):
+        with patch.object(web.worker.requests, "get", return_value=Mock(text="", status_code=200)):
+            with self.assertRaisesRegex(RuntimeError, "为空"):
+                REAL_LIST_PROXY_HOSTS("fixture-token", "fixture-account")
+
+    def test_malformed_success_response_is_not_treated_as_empty_capacity(self):
+        for text in ("<html>upstream unavailable</html>", '{"error":"temporarily unavailable"}'):
+            with self.subTest(text=text), \
+                 patch.object(web.worker.requests, "get", return_value=Mock(text=text, status_code=200)):
+                with self.assertRaises(RuntimeError):
+                    REAL_LIST_PROXY_HOSTS("fixture-token", "fixture-account", allow_empty=True)
 
     def test_edits_during_sync_are_preserved(self):
         self.add_account()

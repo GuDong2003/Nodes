@@ -51,7 +51,7 @@
       el('poolNeeded').textContent = capacity.needed_accounts ?? 0;
       el('poolAuto').textContent = data.settings.enabled ? '开' : '关';
       const unknown = capacity.unknown_bandwidth_accounts || 0;
-      el('poolCapacityHint').textContent = '剩余流量按账号汇总，每个账号只计一次。'
+      el('poolCapacityHint').textContent = '剩余总流量仅汇总符合导出条件的账号（单账号最低剩余流量默认为 100 MiB），每个账号只计一次。'
         + (unknown ? ` ${unknown} 个账号流量未知，自动补号将跳过本轮。` : '');
       el('poolAutomationStatus').textContent = status.message || outcomes[status.outcome] || '等待检查';
       el('poolAutomationStatus').className = `pool-automation-message${['error', 'sync_failed', 'unknown_capacity'].includes(status.outcome) ? ' is-error' : ''}`;

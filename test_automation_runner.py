@@ -1,4 +1,3 @@
-import json
 import stat
 import tempfile
 import threading
@@ -8,15 +7,11 @@ from pathlib import Path
 
 import pool
 
-try:
-    import pool_automation
-except ModuleNotFoundError:
-    pool_automation = None
+import pool_automation
 
 
 class AutomationRunnerTests(unittest.TestCase):
     def setUp(self):
-        self.assertIsNotNone(pool_automation, "threshold scheduler is not implemented")
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.path = Path(temp.name) / "automation.json"
@@ -126,6 +121,22 @@ class AutomationRunnerTests(unittest.TestCase):
         self.assertEqual(self.sync_count, 1)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
         self.assertNotIn("one", self.path.read_text())
+
+    def test_restart_does_not_catch_up_an_overdue_unfinished_check(self):
+        self.runner._update(outcome="running", next_check_at=self.now - 1)
+        restarted = self.make_runner()
+        restarted.poll()
+        self.assertEqual(self.sync_count, 0)
+        self.assertEqual(self.tasks, [])
+        self.assertEqual(restarted.status()["outcome"], "error")
+        self.assertEqual(datetime.fromisoformat(restarted.status()["next_check_at"]).timestamp(), self.now + 1800)
+
+    def test_restart_after_downtime_schedules_future_work_instead_of_immediate_registration(self):
+        self.runner._update(outcome="registration_started", next_check_at=self.now - 60)
+        restarted = self.make_runner()
+        restarted.poll()
+        self.assertEqual(self.tasks, [])
+        self.assertEqual(datetime.fromisoformat(restarted.status()["next_check_at"]).timestamp(), self.now + 1800)
 
     def test_concurrent_checks_are_rejected_and_error_releases_lock(self):
         entered, release = threading.Event(), threading.Event()

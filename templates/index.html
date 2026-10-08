@@ -88,7 +88,7 @@
 
           <section class="panel pool-panel">
             <div class="panel-heading">
-              <div><h2>Resin / GPT 池</h2><p>有效节点数按未过期、未耗尽流量账号的实际导出节点统计；连通性以 Resin 检测为准。</p></div>
+              <div><h2>Resin / GPT 池</h2><p>有效节点数按符合导出条件的账号实际导出节点统计；连通性以 Resin 检测为准。</p></div>
               <button class="secondary-button" type="button" id="ensureCapacityButton" disabled>立即检查</button>
             </div>
             <div class="chain-grid">
@@ -98,7 +98,7 @@
               <div><span>缺口账号估算</span><strong id="poolNeeded">—</strong></div>
               <div><span>自动补号</span><strong id="poolAuto">—</strong></div>
             </div>
-            <p class="settings-hint pool-capacity-hint" id="poolCapacityHint">剩余流量按账号汇总，每个账号只计一次。</p>
+            <p class="settings-hint pool-capacity-hint" id="poolCapacityHint">剩余总流量仅汇总符合导出条件的账号（单账号最低剩余流量默认为 100 MiB），每个账号只计一次。</p>
             <form id="poolAutomationForm" class="settings-form pool-automation-form">
               <label class="check-row"><input id="poolAutomationEnabled" type="checkbox" disabled><span>启用自动补号</span></label>
               <div class="form-grid pool-automation-fields">
