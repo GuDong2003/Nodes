@@ -9,6 +9,8 @@ from unittest.mock import Mock, patch
 import web_app as web
 
 REAL_LIST_PROXY_HOSTS = web.worker.list_proxy_hosts
+REAL_FETCH_OVERVIEW = web.worker.fetch_service_overview
+REAL_FETCH_SUMMARY = web.worker.fetch_accounts_summary
 
 
 class AutomationApiTests(unittest.TestCase):
@@ -52,7 +54,7 @@ class AutomationApiTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail("background work did not finish")
 
-    def fresh_overview(self, token, account_id):
+    def fresh_overview(self, token, account_id, **options):
         return {"bandwidth": 10_000_000_000, "bandwidth_used": 8_000_000_000,
                 "services": {"datacenter_shared": {"proxy_username": "user", "proxy_password": "proxy-secret",
                 "expiration_time": int(time.time()) + 7 * 86400, "proxy_amount": 1}}}
@@ -213,6 +215,50 @@ class AutomationApiTests(unittest.TestCase):
             self.assertEqual(duplicate.status_code, 409)
         finally:
             release.set()
+
+    def test_persistent_api_key_syncs_when_dashboard_login_has_expired(self):
+        record = self.add_account()
+        record["api_key"] = {"token": "persistent-fixture-key"}
+        web._save_account_record(record)
+        calls = []
+        def upstream_get(url, **kwargs):
+            calls.append((url, kwargs.get("headers", {})))
+            response = web.requests.Response()
+            response.url = url
+            response.status_code = 200 if url.startswith("https://api.proxyscrape.com/v4/") else 401
+            if url.endswith("services/overview"):
+                data = {"data": self.fresh_overview("", "one")}
+            elif url.endswith("accounts-summary"):
+                data = {"success": True, "data": [{"id": "one", "status": "valid"}]}
+            else:
+                response._content = b"node.example.com:80\n"
+                return response
+            response._content = json.dumps(data).encode()
+            return response
+        with patch.object(web.worker, "fetch_service_overview", REAL_FETCH_OVERVIEW), \
+             patch.object(web.worker, "fetch_accounts_summary", REAL_FETCH_SUMMARY), \
+             patch.object(web.worker, "list_proxy_hosts", REAL_LIST_PROXY_HOSTS), \
+             patch.object(web.worker.requests, "get", side_effect=upstream_get), \
+             patch.object(web.worker.requests.Session, "get", side_effect=upstream_get), \
+             patch.object(web.worker.time, "sleep"):
+            response = self.client.post("/api/accounts/sync-usage", json={}, headers=self.headers)
+        self.assertEqual(response.json["failed"], [])
+        self.assertEqual(response.json["synced"], ["one@example.com"])
+        self.assertEqual(web._find_account("one@example.com")["bandwidth_remaining"], 2_000_000_000)
+        self.assertEqual(len(calls), 3)
+        for url, headers in calls:
+            self.assertTrue(url.startswith("https://api.proxyscrape.com/v4/"))
+            self.assertEqual(headers.get("api-token"), "persistent-fixture-key")
+            self.assertNotIn("Authorization", headers)
+
+    def test_api_key_only_accounts_can_sync_without_dashboard_access_token(self):
+        record = self.add_account()
+        record.pop("access_token")
+        record["api_key"] = {"token": "persistent-fixture-key"}
+        (self.root / "account" / "accounts.jsonl").write_text(json.dumps(record) + "\n")
+        response = self.client.post("/api/accounts/sync-usage", json={}, headers=self.headers)
+        self.assertEqual(response.json["failed"], [])
+        self.assertEqual(web._find_account("one@example.com")["bandwidth_remaining"], 2_000_000_000)
 
 
 if __name__ == "__main__":

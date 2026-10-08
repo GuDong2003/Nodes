@@ -1474,16 +1474,18 @@ def _ps_session():
 def _refresh_account_remote(record, create_key=False, permissions=None):
     access_token = str(record.get("access_token") or "").strip()
     account_id = str(record.get("account_id") or "").strip()
-    if not access_token:
-        raise RuntimeError("账号没有 access_token，无法向 ProxyScrape 拉数据")
+    api_token = str(_api_key_blob(record).get("token") or record.get("api_token") or "").strip() if not create_key else ""
+    if not access_token and not api_token:
+        raise RuntimeError("账号没有 API Key 或 access_token，无法向 ProxyScrape 拉数据")
     if not account_id:
         raise RuntimeError("账号没有 account_id，无法向 ProxyScrape 拉数据")
     next_record = dict(record)
-    overview = worker.fetch_service_overview(access_token, account_id)
+    read_options = {"api_token": api_token} if api_token else {}
+    overview = worker.fetch_service_overview(access_token, account_id, **read_options)
     next_record.update(worker.overview_credentials(overview))
     client = _ps_session()
     try:
-        summary = worker.fetch_accounts_summary(client, access_token)
+        summary = worker.fetch_accounts_summary(client, access_token, **read_options)
         next_record["account_summary"] = next(
             (item for item in summary if item.get("id") == account_id),
             None,
@@ -1500,7 +1502,7 @@ def _refresh_account_remote(record, create_key=False, permissions=None):
         next_record["plan_status"] = summary.get("status")
     next_record["usage_synced_at"] = int(time.time())
     try:
-        plist = worker.list_proxy_hosts(access_token, account_id, allow_empty=True)
+        plist = worker.list_proxy_hosts(access_token, account_id, allow_empty=True, **read_options)
         next_record["proxy_ips"] = plist
         next_record["proxy_count"] = len(plist)
         next_record["proxy_list_synced_at"] = int(time.time())

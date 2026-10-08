@@ -1203,12 +1203,13 @@ def _json_or_error(response, what):
     return data
 
 
-def fetch_service_overview(access_token, account_id):
-    headers = _auth_headers(access_token)
+def fetch_service_overview(access_token, account_id, *, api_token=None):
+    headers = {"api-token": api_token, "Accept": "application/json"} if api_token else _auth_headers(access_token)
+    base = PS_PUBLIC_API if api_token else PS_BASE + "/v2"
 
     def _overview():
         response = requests.get(
-            f"{PS_BASE}/v2/v4/account/{account_id}/services/overview",
+            f"{base}/v4/account/{account_id}/services/overview",
             headers=headers, timeout=25,
         )
         response.raise_for_status()
@@ -1260,9 +1261,11 @@ def overview_credentials(overview):
     }
 
 
-def fetch_accounts_summary(session, access_token):
+def fetch_accounts_summary(session, access_token, *, api_token=None):
     response = session.get(
-        PS_ACCOUNTS_SUMMARY, headers=_auth_headers(access_token), timeout=25,
+        f"{PS_PUBLIC_API}/v4/account/accounts-summary" if api_token else PS_ACCOUNTS_SUMMARY,
+        headers={"api-token": api_token, "Accept": "application/json"} if api_token else _auth_headers(access_token),
+        timeout=25,
     )
     data = _json_or_error(response, "accounts-summary")
     payload = data.get("data") if isinstance(data, dict) else data
@@ -1348,12 +1351,13 @@ def provision_api_key(session, access_token, account_id, permissions=None, name=
 
 
 # ── 拉取免费 datacenter 代理 ────────────────────────────
-def list_proxy_hosts(access_token, account_id, *, allow_empty=False):
-    headers = _auth_headers(access_token)
+def list_proxy_hosts(access_token, account_id, *, allow_empty=False, api_token=None):
+    headers = {"api-token": api_token, "Accept": "application/json"} if api_token else _auth_headers(access_token)
+    base = PS_PUBLIC_API if api_token else PS_BASE + "/v2"
 
     def _list():
         response = requests.get(
-            f"{PS_BASE}/v2/v4/account/{account_id}/datacenter_shared/proxy-list",
+            f"{base}/v4/account/{account_id}/datacenter_shared/proxy-list",
             headers=headers, params={"protocol": "http", "format": "normal"}, timeout=25,
         )
         response.raise_for_status()
